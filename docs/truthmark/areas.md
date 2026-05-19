@@ -43,6 +43,21 @@ Update truth when:
 - reaction classification, deterministic signal, or incident-extraction behavior changes
 - judge prompt or health-status schema changes
 
+## Dashboard Visualization
+
+Area files:
+- docs/truthmark/areas/dashboard-visualization.md
+
+Code surface:
+- src/agent_health/dashboard_queries.py
+- src/agent_health/dashboard_plugin/**
+- tests/test_dashboard_queries.py
+- tests/test_dashboard_plugin.py
+
+Update truth when:
+- Dashboard summary/detail payloads change
+- Hermes dashboard plugin install, manifest, API, or UI behavior changes
+
 ## Local Runtime
 
 Area files:

@@ -1,0 +1,14 @@
+{
+  "name": "ariadne-eval",
+  "label": "Ariadne Eval",
+  "description": "Instruction-health visualization: incidents, anomalies, hot sessions, and eval-unit drill-downs",
+  "icon": "Activity",
+  "version": "0.1.0",
+  "tab": {
+    "path": "/ariadne-eval",
+    "position": "after:kanban"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}

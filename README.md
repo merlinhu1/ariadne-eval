@@ -6,7 +6,7 @@ Ariadne Eval answers one practical question:
 
 > For each thing I asked Hermes to do, where did it show deterministic incidents or judged anomalies?
 
-V1 is intentionally small, but it still includes an **LLM judge**. The judge is the component that turns trace evidence into the actual health status (`succeed`, `failed`, `mishandled`, `prolonged`, or `not_evaluable`). The simplification is that V1 does **not** install a Hermes plugin, run a scheduler, build a dashboard, or support non-Hermes adapters.
+V1 is intentionally small, but it still includes an **LLM judge** and a read-only Hermes dashboard tab. The judge turns trace evidence into the actual health status (`succeed`, `failed`, `mishandled`, `prolonged`, or `not_evaluable`). The simplification is that ingestion remains state.db-only and V1 does **not** run a resident scheduler, require passive hook capture, or support non-Hermes adapters.
 
 ---
 
@@ -20,7 +20,7 @@ Hermes state.db
   -> compact judge input with aggressive preflight trimming
   -> LLM judge using existing Hermes model config
   -> local evals.db
-  -> CLI inspection
+  -> CLI inspection and Hermes dashboard tab
 ```
 
 This is enough to find common problems:
@@ -48,7 +48,7 @@ Deferred for later:
 - exact tool start/end duration capture;
 - approval/interruption runtime telemetry;
 - scheduled background evaluation;
-- web/TUI dashboards;
+- standalone/non-Hermes dashboards;
 - non-Hermes adapters.
 
 Kept in V1:
@@ -111,8 +111,10 @@ Implemented now:
 - Hermes-provider judge client inheriting `auxiliary.compression` first, then the main model;
 - strict JSON judge parsing and repair retry;
 - manual `eval --due` command that triggers the LLM judge for due imported units;
+- dashboard summary/detail query helpers over the same sidecar data;
+- installable Hermes dashboard plugin tab for read-only visualization of statuses, incidents, anomalies, and hot sessions;
 - `list`, `show`, and `summary` commands over judged results;
-- CLI commands for `init`, `inspect hermes`, `import hermes`, `units`, `incidents`, `signals`, `eval`, `list`, `show`, and `summary`;
+- CLI commands for `init`, `inspect hermes`, `import hermes`, `units`, `incidents`, `signals`, `eval`, `list`, `show`, `summary`, and `dashboard install`;
 - Truthmark routing and behavior docs.
 
 Still to implement for full V1:
@@ -122,9 +124,9 @@ Still to implement for full V1:
 
 Intentionally not in V1:
 
-- Hermes plugin installation or hook capture;
+- passive Hermes hook plugin installation or hook capture;
 - scheduler/cron integration;
-- dashboards;
+- standalone dashboards;
 - generic multi-agent adapter framework.
 
 ---
@@ -191,6 +193,14 @@ Trigger judging manually:
 agent-health --hermes-home ~/.hermes eval --due
 ```
 
+Install the optional Hermes dashboard tab after import/eval data exists:
+
+```bash
+agent-health --hermes-home ~/.hermes dashboard install
+```
+
+Reload or restart the Hermes dashboard and open the Ariadne Eval tab. The tab is read-only; it visualizes `evals.db` and does not import sessions or call the judge.
+
 No built-in scheduler is needed for V1. If automatic periodic evaluation becomes useful later, cron/systemd can run that same command, but keep the default budget guard or set explicit `--max-judge-calls`, `--limit`, and `--min-priority-score` values appropriate for the budget.
 
 Ariadne Eval stores local state under:
@@ -216,17 +226,18 @@ graph TD
     J --> DB[(local evals.db)]
     N --> DB
     DB --> CLI[CLI inspection]
+    DB --> DASH[Hermes dashboard tab]
 ```
 
 Key constraints:
 
 - Hermes `state.db` is the only V1 ingestion source.
-- No Hermes plugin is required.
+- The Hermes dashboard plugin is opt-in and read-only; state.db ingestion and CLI evaluation work without it.
 - The LLM judge is required for final ratings.
 - The judge uses existing Hermes provider/model configuration by default, so no separate evaluator API key is required. It prefers `auxiliary.compression` when configured, then the Hermes main provider/model.
 - Hidden chain-of-thought/provider reasoning fields are excluded.
 - SQLite is local under the Hermes profile.
-- CLI usefulness comes before dashboards or automation.
+- The dashboard visualizes existing sidecar data and must not become a second evaluator path.
 
 ---
 
@@ -261,8 +272,8 @@ Ariadne Eval V1 is not trying to be:
 
 - a hosted observability platform;
 - a Langfuse replacement;
-- a Hermes plugin;
-- a polished web dashboard;
+- a passive Hermes hook plugin;
+- a standalone polished web dashboard;
 - a safety/policy evaluator;
 - an automatic prompt/memory/skill modifier;
 - a multi-user/team analytics product.

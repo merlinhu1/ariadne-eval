@@ -11,7 +11,7 @@ source_of_truth:
 ## Keep V1 State.db-Ingested
 
 - Use Hermes `state.db` as the only V1 ingestion source.
-- Do not require users to install a Hermes plugin before Ariadne Eval is useful.
+- Do not require users to install a passive Hermes hook plugin before Ariadne Eval is useful; the dashboard plugin must remain optional and read-only.
 - Do not create or depend on `events.jsonl` in V1.
 
 ## Trigger The Judge With The CLI
@@ -43,7 +43,7 @@ source_of_truth:
 ## Keep The Product Narrow
 
 - Evaluate per user request, not only whole sessions.
-- Keep feedback loops, prompt patches, dashboards, schedulers, plugins, and non-Hermes adapters out of V1 unless the state.db evaluator and judge path are already working.
+- Keep feedback loops, prompt patches, schedulers, passive hook plugins, standalone dashboards, and non-Hermes adapters out of V1 unless the state.db evaluator and judge path are already working. The Hermes dashboard tab is allowed as a read-only visualization over `evals.db`.
 
 ## Verification
 

@@ -23,9 +23,9 @@ This doc owns CLI commands, Hermes-home initialization, judge config defaults, s
 
 ## Current Behavior
 
-- The CLI exposes `init`, `inspect hermes`, `import hermes`, `units`, `incidents`, `signals`, `eval`, `list`, `show`, and `summary` commands.
+- The CLI exposes `init`, `inspect hermes`, `import hermes`, `units`, `incidents`, `signals`, `eval`, `list`, `show`, `summary`, and `dashboard install` commands.
 - `init` creates the instruction-health home under the Hermes profile and migrates the sidecar eval database.
-- `init` prints that V1 reads Hermes state.db and does not require a plugin, scheduler, or dashboard.
+- `init` prints that Hermes dashboard support is available through an explicit opt-in plugin install.
 - `init` also prints the judge provider locality caveat because the judge uses Hermes provider/model resolution by default.
 - `import hermes` reads Hermes sessions, normalizes eval units, stores trace events, and stores deterministic signals.
 - `units` lists recently imported eval units from the sidecar database.
@@ -36,6 +36,7 @@ This doc owns CLI commands, Hermes-home initialization, judge config defaults, s
 - Judge routing inherits Hermes models by trying configured `auxiliary.compression` first, then the Hermes main provider/model.
 - `list`, `show`, and `summary` query latest judged results from the sidecar database; `list --details` prints request, next-user reaction, observed outcome, and anomaly evidence context for each row.
 - The V1 sidecar SQLite schema includes eval units, trace events, deterministic signals, LLM evals, anomalies, and eval state tables.
+- `dashboard install` copies the bundled dashboard plugin into `<hermes-home>/plugins/ariadne-eval/dashboard`.
 
 ## Core Rules
 
@@ -47,7 +48,7 @@ This doc owns CLI commands, Hermes-home initialization, judge config defaults, s
 
 ## Flows And States
 
-- Init flow: resolve Hermes home, create config/log paths, migrate SQLite, print the state.db-only ingestion note and judge provider caveat.
+- Init flow: resolve Hermes home, create config/log paths, migrate SQLite, print the dashboard opt-in note and judge provider caveat.
 - Import flow: discover sessions, normalize each session into units, upsert units and trace events, replace deterministic signals.
 - Eval flow: a manual `agent-health eval --due` command loads due units, extracts signals, applies deterministic priority and max-call budget gates, trims bulky judge evidence, calls the judge, and stores `llm_evals` plus `anomalies` rows.
 - Scheduling is not a V1 runtime behavior; future cron/systemd automation may invoke the same manual eval command.
@@ -66,12 +67,12 @@ This doc owns CLI commands, Hermes-home initialization, judge config defaults, s
 
 ## Rationale
 
-A CLI plus SQLite keeps the MVP inspectable and useful without committing to a dashboard, scheduler, plugin, or hosted observability system. Keeping judge/anomaly tables in the schema supports the core rating workflow without requiring the plugin path.
+A CLI plus SQLite keeps the MVP inspectable and useful without committing to a scheduler, passive hook plugin, standalone dashboard, or hosted observability system. The opt-in Hermes dashboard plugin reuses that same SQLite data for visualization. Keeping judge/anomaly tables in the schema supports the core rating workflow without requiring the dashboard path.
 
 ## Non-Goals
 
 - This doc does not own future Hermes hook internals.
-- This doc does not own future web dashboard or scheduled evaluator behavior.
+- This doc owns the install command for the Hermes dashboard plugin but not the dashboard query/API/UI behavior.
 
 ## Maintenance Notes
 

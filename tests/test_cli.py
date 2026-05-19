@@ -27,6 +27,13 @@ class CliBudgetTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             parser.parse_args(["bumps", "--since", "5h", "--limit", "10"])
 
+    def test_dashboard_install_command_exists(self):
+        parser = build_parser()
+        args = parser.parse_args(["dashboard", "install"])
+
+        self.assertEqual(args.dashboard_command, "install")
+        self.assertTrue(callable(args.func))
+
     def test_judge_call_budget_caps_large_requested_limits(self):
         self.assertEqual(judge_call_budget(limit=100, max_judge_calls=10), 10)
         self.assertEqual(judge_call_budget(limit=3, max_judge_calls=10), 3)

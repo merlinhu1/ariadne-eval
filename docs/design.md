@@ -24,7 +24,7 @@ Hermes state.db
   -> LLM judge through existing Hermes provider/model config
   -> structured status + anomalies
   -> local evals.db
-  -> CLI inspection
+  -> CLI inspection and Hermes dashboard tab
 ```
 
 ## Judge Trigger
@@ -80,6 +80,13 @@ agent-health eval --due --limit 50
    - `signals`.
    - `eval --due`.
    - `list`, `show`, and `summary` over judged results.
+   - `dashboard install` to install the opt-in Hermes tab.
+
+7. Hermes dashboard tab
+   - Installs into `$HERMES_HOME/plugins/ariadne-eval/dashboard`.
+   - Exposes read-only `/summary` and `/units/{eval_unit_id}` plugin API routes.
+   - Visualizes statuses, incidents, anomalies, token totals, timeline buckets, and hot sessions from `evals.db`.
+   - Does not import sessions or call the judge.
 
 ## Explicitly Deferred
 
@@ -88,7 +95,7 @@ agent-health eval --due --limit 50
 - Exact tool start/end duration from hooks.
 - Approval/interruption runtime events.
 - Built-in scheduler or daemon. A future cron/systemd entry may call `agent-health eval --due`, but the manual CLI command is the V1 trigger.
-- Web/TUI dashboard.
+- Standalone web/TUI dashboard outside Hermes.
 - Non-Hermes adapters.
 - Automatic prompt/memory/skill changes.
 

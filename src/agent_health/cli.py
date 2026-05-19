@@ -9,6 +9,7 @@ from pathlib import Path
 from agent_health.adapters.hermes import HermesAdapter, HermesStateReader, default_hermes_home
 from agent_health.incidents import extract_incident_events, summarize_incident_events
 from agent_health.config import init_home
+from agent_health.dashboard_plugin import install_dashboard_plugin
 from agent_health.db import EvalDB, default_eval_db_path
 from agent_health.judge import HermesLLMJudgeClient, PROMPT_VERSION, TokenUsage
 from agent_health.signals import extract_deterministic_signals
@@ -99,7 +100,7 @@ def cmd_init(args) -> int:
     base = init_home(home)
     EvalDB(default_eval_db_path(home)).migrate()
     print(f"Initialized {base}")
-    print("V1 reads Hermes state.db only; no plugin, scheduler, or dashboard is required.")
+    print("Hermes dashboard support is available as an explicit opt-in plugin install.")
     print("Judge provider inherits Hermes routing: auxiliary.compression when configured, then the main provider/model.")
     print("Budget guard defaults: at most 5 judge calls per eval run, with a 120-minute cooldown for no-reaction turns.")
     return 0
@@ -330,6 +331,14 @@ def cmd_summary(args) -> int:
     return 0
 
 
+def cmd_dashboard_install(args) -> int:
+    home = Path(args.hermes_home).expanduser()
+    destination = install_dashboard_plugin(home)
+    print(f"Installed Ariadne Eval dashboard plugin to {destination}")
+    print("Open Hermes dashboard and use the Ariadne Eval tab after restarting/reloading the dashboard server.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent-health", description="Local Hermes instruction-health evaluator")
     parser.add_argument("--hermes-home", default=str(default_hermes_home()))
@@ -396,6 +405,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_summary = sub.add_parser("summary")
     p_summary.add_argument("--since")
     p_summary.set_defaults(func=cmd_summary)
+
+    p_dashboard = sub.add_parser("dashboard", help="Install or manage the Hermes dashboard tab")
+    dashboard_sub = p_dashboard.add_subparsers(dest="dashboard_command", required=True)
+    p_dashboard_install = dashboard_sub.add_parser("install", help="Install the Ariadne Eval tab into $HERMES_HOME/plugins")
+    p_dashboard_install.set_defaults(func=cmd_dashboard_install)
 
     return parser
 

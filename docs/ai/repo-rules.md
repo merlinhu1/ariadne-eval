@@ -6,6 +6,8 @@ source_of_truth:
   - ../../.truthmark/config.yml
   - ../architecture/system-overview.md
   - ../standards/mvp-implementation.md
+  - ../standards/versioning.md
+  - ../standards/change-notes.md
   - ../../research/agent_instruction_health_evaluator_design1.md
 ---
 
@@ -21,6 +23,7 @@ This is the repository instruction authority for Ariadne Eval agents. `AGENTS.md
 - Read `docs/truthmark/areas.md` and the relevant files under `docs/truthmark/areas/` before deciding where truth belongs.
 - Use `docs/design.md` for the active V1 architecture.
 - Use `research/agent_instruction_health_evaluator_design1.md` as the original product-design reference, not as the current V1 authority when it conflicts with `docs/design.md`.
+- Use `docs/standards/versioning.md` and `docs/standards/change-notes.md` when a change affects release/version decisions, package metadata, published behavior, or release notes.
 
 ## Truthmark Structure
 
@@ -33,11 +36,12 @@ This is the repository instruction authority for Ariadne Eval agents. `AGENTS.md
 ## Implementation Rules
 
 - Build the Hermes-first state.db ingestion and LLM judge path before adding broader runtime integrations.
-- Do not add a Hermes plugin, scheduler, dashboard, or non-Hermes adapter to V1 unless explicitly requested.
+- Keep state.db ingestion and the CLI judge path useful without requiring passive hook capture.
+- The Hermes dashboard tab is now an active, opt-in visualization surface; keep it read-only over `evals.db` and do not let it import sessions or call the judge.
+- Do not add a scheduler or non-Hermes adapter to V1 unless explicitly requested.
 - Keep the LLM judge in V1; deterministic signals alone are not the final rating mechanism.
 - Do not store or depend on hidden chain-of-thought or provider reasoning fields.
 - Prefer deterministic evidence before LLM judgment.
-- Keep the CLI useful before adding dashboards.
 
 ## Verification Rules
 
@@ -45,3 +49,4 @@ This is the repository instruction authority for Ariadne Eval agents. `AGENTS.md
 - When functional behavior changes, update or verify the routed Truthmark docs before reporting completion.
 - For docs-only changes, run `truthmark check` and fix diagnostics unless they are intentionally deferred and reported.
 - Report skipped checks explicitly with the reason.
+- For version/package/release-impact decisions, apply `docs/standards/versioning.md`; if the package version changes, add a matching change note under `changes/` using `docs/standards/change-notes.md`.

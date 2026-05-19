@@ -69,7 +69,22 @@ class JudgeThresholdPolicyTest(unittest.TestCase):
         })
 
         self.assertEqual(result["anomalies"][0]["type"], "unsupported_claim")
-        self.assertEqual(result["barriers"][0]["type"], "unsupported_claim")
+        self.assertNotIn("barriers", result)
+
+    def test_eval_json_does_not_accept_legacy_barriers(self):
+        result = validate_eval_json({
+            "schema_version": "instruction_health_eval_v1",
+            "health_status": "mishandled",
+            "confidence": "high",
+            "primary_reason": "The agent over-claimed completion.",
+            "user_reaction": {"type": "correction", "used_as_evidence": True, "evidence": "No"},
+            "barriers": [
+                {"type": "unsupported_claim", "severity": "high", "source": "assistant_response", "evidence": "Claimed done without evidence"}
+            ],
+        })
+
+        self.assertEqual(result["anomalies"], [])
+        self.assertNotIn("barriers", result)
 
 
 class JudgeRouteTest(unittest.TestCase):
@@ -141,7 +156,7 @@ class JudgePersistenceTest(unittest.TestCase):
             self.assertEqual(latest["id"], eval_id)
             self.assertEqual(latest["health_status"], "mishandled")
             self.assertEqual(latest["anomalies"][0]["anomaly_type"], "action_misrepresentation")
-            self.assertEqual(latest["barriers"][0]["barrier_type"], "action_misrepresentation")
+            self.assertNotIn("barriers", latest)
             self.assertEqual(db.list_due_units(limit=10), [])
 
     def test_client_records_token_usage_from_successful_and_repair_calls(self):
@@ -166,7 +181,7 @@ class JudgePersistenceTest(unittest.TestCase):
             calls.append(messages)
             if len(calls) == 1:
                 return Response()
-            return '{"schema_version":"instruction_health_eval_v1","health_status":"succeed","confidence":"medium","goal_summary":"Answer","observed_outcome":"Answered","primary_reason":"The response addressed the request.","user_reaction":{"type":"none","used_as_evidence":false,"evidence":""},"barriers":[],"prolongation_evidence":{"tool_calls":0,"api_calls":0,"duration_seconds":1,"repeated_actions":[]},"missed_or_mishandled_requirements":[],"not_evaluable_reason":null}'
+            return '{"schema_version":"instruction_health_eval_v1","health_status":"succeed","confidence":"medium","goal_summary":"Answer","observed_outcome":"Answered","primary_reason":"The response addressed the request.","user_reaction":{"type":"none","used_as_evidence":false,"evidence":""},"anomalies":[],"prolongation_evidence":{"tool_calls":0,"api_calls":0,"duration_seconds":1,"repeated_actions":[]},"missed_or_mishandled_requirements":[],"not_evaluable_reason":null}'
 
         client = HermesLLMJudgeClient(
             hermes_home=Path("/tmp/nonexistent"),
@@ -185,7 +200,7 @@ class JudgePersistenceTest(unittest.TestCase):
             calls.append(route.name)
             if route.name == "auxiliary.compression":
                 raise RuntimeError("compression unavailable")
-            return '{"schema_version":"instruction_health_eval_v1","health_status":"succeed","confidence":"medium","goal_summary":"Answer","observed_outcome":"Answered","primary_reason":"The response addressed the request.","user_reaction":{"type":"none","used_as_evidence":false,"evidence":""},"barriers":[],"prolongation_evidence":{"tool_calls":0,"api_calls":0,"duration_seconds":1,"repeated_actions":[]},"missed_or_mishandled_requirements":[],"not_evaluable_reason":null}'
+            return '{"schema_version":"instruction_health_eval_v1","health_status":"succeed","confidence":"medium","goal_summary":"Answer","observed_outcome":"Answered","primary_reason":"The response addressed the request.","user_reaction":{"type":"none","used_as_evidence":false,"evidence":""},"anomalies":[],"prolongation_evidence":{"tool_calls":0,"api_calls":0,"duration_seconds":1,"repeated_actions":[]},"missed_or_mishandled_requirements":[],"not_evaluable_reason":null}'
 
         client = HermesLLMJudgeClient(
             hermes_home=Path("/tmp/nonexistent"),

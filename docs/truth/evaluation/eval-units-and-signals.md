@@ -9,7 +9,6 @@ source_of_truth:
   - ../../../src/agent_health/reactions.py
   - ../../../src/agent_health/signals.py
   - ../../../src/agent_health/incidents.py
-  - ../../../src/agent_health/bumps.py
   - ../../../src/agent_health/prompts/instruction_health_v1.txt
   - ../../../src/agent_health/judge.py
 ---

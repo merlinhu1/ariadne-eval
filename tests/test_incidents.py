@@ -27,7 +27,7 @@ class IncidentExtractionTest(unittest.TestCase):
         self.assertEqual(tool_errors[0]["related_event_id"], "e1")
         self.assertEqual(tool_errors[1]["related_event_id"], "e2")
         self.assertIn("terminal", tool_errors[0]["evidence"])
-        self.assertEqual(tool_errors[0]["bump_type"], "tool_error")
+        self.assertNotIn("bump_type", tool_errors[0])
 
     def test_incidents_include_loops_excess_and_incomplete_turns(self):
         unit = {
@@ -80,7 +80,7 @@ class IncidentExtractionTest(unittest.TestCase):
 
         self.assertEqual(summary["total_incidents"], 2)
         self.assertEqual(summary["by_type"], {"tool_error": 2})
-        self.assertEqual(summary["total_bumps"], 2)
+        self.assertNotIn("total_bumps", summary)
 
 
 if __name__ == "__main__":

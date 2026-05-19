@@ -22,13 +22,10 @@ class CliBudgetTest(unittest.TestCase):
         self.assertEqual(args.limit, 10)
         self.assertTrue(callable(args.func))
 
-    def test_bumps_command_remains_a_legacy_alias(self):
+    def test_bumps_command_is_removed(self):
         parser = build_parser()
-        args = parser.parse_args(["bumps", "--since", "5h", "--limit", "10"])
-
-        self.assertEqual(args.since, "5h")
-        self.assertEqual(args.limit, 10)
-        self.assertTrue(callable(args.func))
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["bumps", "--since", "5h", "--limit", "10"])
 
     def test_judge_call_budget_caps_large_requested_limits(self):
         self.assertEqual(judge_call_budget(limit=100, max_judge_calls=10), 10)

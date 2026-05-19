@@ -27,8 +27,6 @@ def _incident(
         "source_turn_index": unit.get("source_turn_index"),
         "started_at": unit.get("started_at"),
         "incident_type": incident_type,
-        # Backward-compatible alias for existing consumers and historical rows.
-        "bump_type": incident_type,
         "severity": severity,
         "source": source,
         "evidence": evidence,
@@ -161,16 +159,10 @@ def extract_incident_events(unit: dict[str, Any], thresholds: dict[str, int | fl
 
 
 def summarize_incident_events(incidents: list[dict[str, Any]]) -> dict[str, Any]:
-    counts = Counter(str(i.get("incident_type") or i.get("bump_type") or "unknown") for i in incidents)
+    counts = Counter(str(i.get("incident_type") or "unknown") for i in incidents)
     severity_counts = Counter(str(i.get("severity") or "medium") for i in incidents)
     return {
         "total_incidents": len(incidents),
-        "total_bumps": len(incidents),  # Backward-compatible alias.
         "by_type": dict(counts.most_common()),
         "by_severity": dict(severity_counts.most_common()),
     }
-
-
-# Backward-compatible API names.
-extract_bump_events = extract_incident_events
-summarize_bump_events = summarize_incident_events

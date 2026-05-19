@@ -168,8 +168,6 @@ def cmd_incidents(args) -> int:
     return 0
 
 
-cmd_bumps = cmd_incidents
-
 
 def cmd_signals(args) -> int:
     home = Path(args.hermes_home).expanduser()
@@ -182,11 +180,9 @@ def cmd_signals(args) -> int:
 
 
 def _format_anomalies(row: dict) -> str:
-    anomalies = row.get("anomalies") or row.get("barriers") or []
-    return ",".join(str(a.get("anomaly_type") or a.get("barrier_type") or a.get("type")) for a in anomalies[:5]) or "-"
+    anomalies = row.get("anomalies") or []
+    return ",".join(str(a.get("anomaly_type") or a.get("type")) for a in anomalies[:5]) or "-"
 
-
-_format_barriers = _format_anomalies
 
 
 def _one_line(value: object, limit: int = 180) -> str:
@@ -201,7 +197,7 @@ def _print_eval_context(unit: dict, eval_data: dict, *, prefix: str = "  ") -> N
     observed = eval_data.get("observed_outcome")
     if observed:
         print(f"{prefix}outcome: {_one_line(observed, 180)}")
-    anomalies = eval_data.get("anomalies") or eval_data.get("barriers") or []
+    anomalies = eval_data.get("anomalies") or []
     for anomaly in anomalies[:3]:
         if not isinstance(anomaly, dict):
             continue
@@ -368,13 +364,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_incidents.add_argument("--summary", action="store_true", help="Print incident counts by type/severity as JSON")
     p_incidents.set_defaults(func=cmd_incidents)
 
-    p_bumps = sub.add_parser("bumps", help="Legacy alias for incidents")
-    p_bumps.add_argument("--since")
-    p_bumps.add_argument("--limit", type=int, default=50, help="Maximum incident events to print")
-    p_bumps.add_argument("--unit-limit", type=int, default=200, help="Maximum imported eval units to scan")
-    p_bumps.add_argument("--details", action="store_true", help="Show request context below each incident")
-    p_bumps.add_argument("--summary", action="store_true", help="Print incident counts by type/severity as JSON")
-    p_bumps.set_defaults(func=cmd_bumps)
 
     p_signals = sub.add_parser("signals")
     p_signals.add_argument("eval_unit_id")

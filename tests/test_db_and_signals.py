@@ -43,7 +43,8 @@ class EvalDbAndSignalsTest(unittest.TestCase):
 
             with closing(sqlite3.connect(Path(tmp) / "evals.db")) as con:
                 tables = {r[0] for r in con.execute("select name from sqlite_master where type='table'")}
-                self.assertTrue({"eval_units", "trace_events", "deterministic_signals", "llm_evals", "barriers", "eval_state"}.issubset(tables))
+                self.assertTrue({"eval_units", "trace_events", "deterministic_signals", "llm_evals", "anomalies", "eval_state"}.issubset(tables))
+                self.assertNotIn("barriers", tables)
                 row = con.execute("select user_request, assistant_response from eval_units").fetchone()
                 columns = {r[1] for r in con.execute("pragma table_info(llm_evals)")}
             self.assertEqual(row, ("Do it", "Done"))
@@ -119,7 +120,7 @@ class EvalDbAndSignalsTest(unittest.TestCase):
                 prompt_version="instruction_health_v1",
                 judge_provider="test",
                 judge_model="test-model",
-                eval_data={"health_status": "succeed", "confidence": "high", "primary_reason": "ok", "barriers": []},
+                eval_data={"health_status": "succeed", "confidence": "high", "primary_reason": "ok", "anomalies": []},
             )
             due_after_eval = db.list_due_units(limit=10, cooldown_seconds=120, now=1000.0)
             self.assertEqual([row["id"] for row in due_after_eval], ["hermes:reacted:turn:1"])
@@ -158,7 +159,7 @@ class EvalDbAndSignalsTest(unittest.TestCase):
                 prompt_version="instruction_health_v1",
                 judge_provider=None,
                 judge_model=None,
-                eval_data={"health_status": "not_evaluable", "confidence": "low", "primary_reason": "judge failed", "barriers": []},
+                eval_data={"health_status": "not_evaluable", "confidence": "low", "primary_reason": "judge failed", "anomalies": []},
                 evaluator_error="provider failed",
             )
 

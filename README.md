@@ -39,7 +39,7 @@ Hermes already records the durable conversation history in `state.db`: sessions,
 
 The earlier passive-hook plugin idea is deferred. Hooks can improve exact runtime telemetry later, but they are not required for a useful V1.
 
-The LLM judge is triggered by an explicit CLI batch command, not by a resident scheduler. The V1 command is `agent-health eval --due`: it loads imported/due eval units from `evals.db`, builds the judge input, calls Hermes' existing model runtime, and writes `llm_evals` plus anomaly rows (stored in the legacy `barriers` table). Judge routing prefers any configured `auxiliary.compression` model/provider first, then falls back to the Hermes main provider/model. Budget guardrails are intentionally conservative: by default one invocation considers at most 10 due candidates, filters them by deterministic priority, makes at most 5 judge calls, skips any unit that already has a prior judgement unless `--reevaluate` is explicit, waits 120 minutes before judging a no-reaction last turn, records provider-reported judge token usage, and prints per-eval context around request, reaction, outcome, and anomaly evidence. Judge strictness is configurable with `--judgement-threshold strict|balanced|relaxed`; the default `strict` threshold requires concrete trace/assistant evidence and should not mark natural follow-ups as anomalies. A future cron/systemd timer can call that same command, but the scheduler is just automation around the CLI, not a required Ariadne component.
+The LLM judge is triggered by an explicit CLI batch command, not by a resident scheduler. The V1 command is `agent-health eval --due`: it loads imported/due eval units from `evals.db`, builds the judge input, calls Hermes' existing model runtime, and writes `llm_evals` plus `anomalies` rows. Judge routing prefers any configured `auxiliary.compression` model/provider first, then falls back to the Hermes main provider/model. Budget guardrails are intentionally conservative: by default one invocation considers at most 10 due candidates, filters them by deterministic priority, makes at most 5 judge calls, skips any unit that already has a prior judgement unless `--reevaluate` is explicit, waits 120 minutes before judging a no-reaction last turn, records provider-reported judge token usage, and prints per-eval context around request, reaction, outcome, and anomaly evidence. Judge strictness is configurable with `--judgement-threshold strict|balanced|relaxed`; the default `strict` threshold requires concrete trace/assistant evidence and should not mark natural follow-ups as anomalies. A future cron/systemd timer can call that same command, but the scheduler is just automation around the CLI, not a required Ariadne component.
 
 Deferred for later:
 
@@ -106,7 +106,7 @@ Implemented now:
 - deterministic event-level incident extraction, including one `tool_error` incident per failed/error-looking tool event;
 - deterministic priority prefiltering before judge calls;
 - aggressive preflight trimming for large documents, code blocks, image/data blobs, and bulky tool previews;
-- local SQLite sidecar schema including judge/anomaly tables (the persisted table remains `barriers` for compatibility);
+- local SQLite sidecar schema including judge/anomaly tables;
 - judge prompt with trim-policy and configurable-threshold guidance;
 - Hermes-provider judge client inheriting `auxiliary.compression` first, then the main model;
 - strict JSON judge parsing and repair retry;

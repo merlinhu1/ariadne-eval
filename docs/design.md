@@ -70,7 +70,7 @@ agent-health eval --due --limit 50
 
 5. Sidecar SQLite
    - `$HERMES_HOME/instruction-health/evals.db`.
-   - Tables needed in V1: `eval_units`, `trace_events`, `deterministic_signals`, `llm_evals`, `barriers` (legacy anomaly storage), `eval_state`.
+   - Tables needed in V1: `eval_units`, `trace_events`, `deterministic_signals`, `llm_evals`, `anomalies`, `eval_state`.
 
 6. CLI
    - `init`.

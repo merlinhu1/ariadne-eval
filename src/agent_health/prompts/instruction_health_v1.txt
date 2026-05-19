@@ -49,7 +49,7 @@ Return exactly one JSON object matching this schema:
   "not_evaluable_reason": null
 }
 
-Use `anomalies` for semantic judge findings. `barriers` is an accepted legacy alias, but prefer `anomalies`.
+Use `anomalies` for semantic judge findings.
 
 Status definitions:
 - failed: concrete trace/assistant evidence shows the user goal was not achieved. Do not infer failure from a natural follow-up alone.

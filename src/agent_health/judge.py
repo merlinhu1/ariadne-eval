@@ -24,8 +24,6 @@ ANOMALY_TYPES = {
     "excessive_duration", "excessive_api_calls", "excessive_tool_calls", "context_loss",
 }
 
-# Backward-compatible internal name for historical DB columns and existing callers.
-BARRIER_TYPES = ANOMALY_TYPES
 
 
 @dataclass(frozen=True)
@@ -209,8 +207,6 @@ def validate_eval_json(data: dict[str, Any]) -> dict[str, Any]:
     }
     anomalies = normalized.get("anomalies")
     if not isinstance(anomalies, list):
-        anomalies = normalized.get("barriers")
-    if not isinstance(anomalies, list):
         anomalies = []
     cleaned_anomalies = []
     for anomaly in anomalies:
@@ -229,8 +225,7 @@ def validate_eval_json(data: dict[str, Any]) -> dict[str, Any]:
             "evidence": str(anomaly.get("evidence") or ""),
         })
     normalized["anomalies"] = cleaned_anomalies
-    # Backward-compatible alias for stored historical JSON and older callers.
-    normalized["barriers"] = cleaned_anomalies
+    normalized.pop("barriers", None)
     normalized.setdefault("prolongation_evidence", {"tool_calls": 0, "api_calls": 0, "duration_seconds": None, "repeated_actions": []})
     normalized.setdefault("missed_or_mishandled_requirements", [])
     normalized.setdefault("not_evaluable_reason", None)
@@ -499,7 +494,7 @@ class HermesLLMJudgeClient:
 
     def _repair_messages(self, invalid_output: str) -> list[dict[str, str]]:
         return [
-            {"role": "system", "content": "Repair the following evaluator output into exactly one valid JSON object matching schema_version instruction_health_eval_v1. Prefer `anomalies` for judge findings; `barriers` is accepted as a legacy alias. Return JSON only."},
+            {"role": "system", "content": "Repair the following evaluator output into exactly one valid JSON object matching schema_version instruction_health_eval_v1. Use `anomalies` for judge findings. Return JSON only."},
             {"role": "user", "content": invalid_output[:12000]},
         ]
 
@@ -540,7 +535,6 @@ class HermesLLMJudgeClient:
             "primary_reason": f"Evaluator error: {error}"[:500],
             "user_reaction": {"type": "unknown", "used_as_evidence": False, "evidence": ""},
             "anomalies": [],
-            "barriers": [],
             "prolongation_evidence": {"tool_calls": unit.get("tool_call_count") or 0, "api_calls": unit.get("api_call_count") or 0, "duration_seconds": None, "repeated_actions": []},
             "missed_or_mishandled_requirements": [],
             "not_evaluable_reason": "judge_error",

@@ -81,11 +81,11 @@ CREATE TABLE IF NOT EXISTS llm_evals (
     created_at REAL NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS barriers (
+CREATE TABLE IF NOT EXISTS anomalies (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     eval_id TEXT NOT NULL REFERENCES llm_evals(id) ON DELETE CASCADE,
     eval_unit_id TEXT NOT NULL REFERENCES eval_units(id) ON DELETE CASCADE,
-    barrier_type TEXT NOT NULL,
+    anomaly_type TEXT NOT NULL,
     severity TEXT NOT NULL,
     evidence TEXT,
     source TEXT,
@@ -103,7 +103,7 @@ CREATE INDEX IF NOT EXISTS idx_eval_units_started_at ON eval_units(started_at);
 CREATE INDEX IF NOT EXISTS idx_trace_events_eval_unit ON trace_events(eval_unit_id);
 CREATE INDEX IF NOT EXISTS idx_signals_eval_unit ON deterministic_signals(eval_unit_id);
 CREATE INDEX IF NOT EXISTS idx_llm_evals_status ON llm_evals(health_status);
-CREATE INDEX IF NOT EXISTS idx_barriers_type ON barriers(barrier_type);
+CREATE INDEX IF NOT EXISTS idx_anomalies_type ON anomalies(anomaly_type);
 """
 
 EVAL_UNIT_FIELDS = [
@@ -136,6 +136,7 @@ class EvalDB:
     def migrate(self) -> None:
         with closing(self.connect()) as con:
             con.executescript(SCHEMA_SQL)
+            con.execute("DROP TABLE IF EXISTS barriers")
             existing = {r[1] for r in con.execute("PRAGMA table_info(llm_evals)").fetchall()}
             token_columns = {
                 "judge_prompt_tokens": "INTEGER DEFAULT 0",
@@ -320,7 +321,7 @@ class EvalDB:
             )
             anomalies = eval_data.get("anomalies")
             if not isinstance(anomalies, list):
-                anomalies = eval_data.get("barriers") or []
+                anomalies = []
             for anomaly in anomalies:
                 if not isinstance(anomaly, dict):
                     continue
@@ -329,8 +330,8 @@ class EvalDB:
                     continue
                 con.execute(
                     """
-                    INSERT INTO barriers
-                        (eval_id, eval_unit_id, barrier_type, severity, evidence, source, related_event_id)
+                    INSERT INTO anomalies
+                        (eval_id, eval_unit_id, anomaly_type, severity, evidence, source, related_event_id)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
@@ -360,19 +361,10 @@ class EvalDB:
                 result["eval_json"] = json.loads(result["eval_json"])
             except Exception:
                 pass
-            result["barriers"] = [
-                dict(r) for r in con.execute(
-                    "SELECT * FROM barriers WHERE eval_id = ? ORDER BY id ASC",
-                    (result["id"],),
-                ).fetchall()
-            ]
-            result["anomalies"] = [
-                {
-                    **barrier,
-                    "anomaly_type": barrier.get("barrier_type"),
-                }
-                for barrier in result["barriers"]
-            ]
+            result["anomalies"] = [dict(r) for r in con.execute(
+                "SELECT * FROM anomalies WHERE eval_id = ? ORDER BY id ASC",
+                (result["id"],),
+            ).fetchall()]
             return result
 
     def list_llm_evals(self, statuses: list[str] | None = None, limit: int = 50, since: float | None = None) -> list[dict[str, Any]]:
@@ -401,19 +393,10 @@ class EvalDB:
         with closing(self.connect()) as con:
             rows = [dict(r) for r in con.execute(sql, params).fetchall()]
             for row in rows:
-                row["barriers"] = [
-                    dict(r) for r in con.execute(
-                        "SELECT * FROM barriers WHERE eval_id = ? ORDER BY id ASC",
-                        (row["id"],),
-                    ).fetchall()
-                ]
-                row["anomalies"] = [
-                    {
-                        **barrier,
-                        "anomaly_type": barrier.get("barrier_type"),
-                    }
-                    for barrier in row["barriers"]
-                ]
+                row["anomalies"] = [dict(r) for r in con.execute(
+                    "SELECT * FROM anomalies WHERE eval_id = ? ORDER BY id ASC",
+                    (row["id"],),
+                ).fetchall()]
             return rows
 
     def summary(self, since: float | None = None) -> dict[str, Any]:
@@ -441,21 +424,21 @@ class EvalDB:
                 """,
                 params,
             ).fetchall()
-            barrier_rows = con.execute(
+            anomaly_rows = con.execute(
                 f"""
                 WITH latest AS (
                     SELECT eval_unit_id, MAX(created_at) AS max_created
                     FROM llm_evals
                     GROUP BY eval_unit_id
                 )
-                SELECT b.barrier_type, COUNT(*) AS count
-                FROM barriers b
-                JOIN llm_evals e ON e.id = b.eval_id
+                SELECT a.anomaly_type, COUNT(*) AS count
+                FROM anomalies a
+                JOIN llm_evals e ON e.id = a.eval_id
                 JOIN latest l ON l.eval_unit_id = e.eval_unit_id AND l.max_created = e.created_at
-                JOIN eval_units u ON u.id = b.eval_unit_id
+                JOIN eval_units u ON u.id = a.eval_unit_id
                 {where}
-                GROUP BY b.barrier_type
-                ORDER BY count DESC, b.barrier_type ASC
+                GROUP BY a.anomaly_type
+                ORDER BY count DESC, a.anomaly_type ASC
                 LIMIT 20
                 """,
                 params,
@@ -483,8 +466,7 @@ class EvalDB:
             return {
                 "evaluated_turns": total,
                 "statuses": {r["health_status"]: r["count"] for r in status_rows},
-                "top_anomalies": [{"anomaly_type": r["barrier_type"], "count": r["count"]} for r in barrier_rows],
-                "top_barriers": [{"barrier_type": r["barrier_type"], "count": r["count"]} for r in barrier_rows],
+                "top_anomalies": [{"anomaly_type": r["anomaly_type"], "count": r["count"]} for r in anomaly_rows],
                 "judge_tokens": {
                     "prompt_tokens": int(token_row["prompt_tokens"] or 0),
                     "completion_tokens": int(token_row["completion_tokens"] or 0),

@@ -25,9 +25,11 @@ Code surface:
 - src/agent_health/__init__.py
 - examples/**
 - tests/test_db_and_signals.py
+- tests/test_cli.py
 
 Update truth when:
 - CLI commands or arguments change
 - sidecar SQLite schema changes
+- judge config defaults, trigger command, or storage behavior changes
 - Hermes-home path resolution or initialization behavior changes
 - CLI package entry behavior changes

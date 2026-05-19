@@ -40,10 +40,10 @@ class EvalDbAndSignalsTest(unittest.TestCase):
             }
             db.upsert_eval_unit(unit)
 
-            con = sqlite3.connect(Path(tmp) / "evals.db")
-            tables = {r[0] for r in con.execute("select name from sqlite_master where type='table'")}
-            self.assertTrue({"eval_units", "trace_events", "deterministic_signals", "llm_evals", "barriers", "eval_state"}.issubset(tables))
-            row = con.execute("select user_request, assistant_response from eval_units").fetchone()
+            with sqlite3.connect(Path(tmp) / "evals.db") as con:
+                tables = {r[0] for r in con.execute("select name from sqlite_master where type='table'")}
+                self.assertTrue({"eval_units", "trace_events", "deterministic_signals", "llm_evals", "barriers", "eval_state"}.issubset(tables))
+                row = con.execute("select user_request, assistant_response from eval_units").fetchone()
             self.assertEqual(row, ("Do it", "Done"))
 
     def test_signals_detect_tool_errors_repeats_duration_and_reaction(self):
@@ -73,6 +73,53 @@ class EvalDbAndSignalsTest(unittest.TestCase):
         self.assertEqual(classify_reaction("Thanks, that works"), "acceptance")
         self.assertEqual(classify_reaction("Now add tests too"), "scope_change")
         self.assertEqual(classify_reaction("Can you create the file?", previous_request="Create the file"), "repeated_request")
+
+    def test_due_units_are_budget_gated_by_reaction_or_cooldown(self):
+        def unit(unit_id, *, ended_at, reaction=None):
+            return {
+                "id": unit_id,
+                "framework": "hermes",
+                "source_session_id": unit_id.split(":")[1],
+                "source_turn_index": 1,
+                "user_message_id": unit_id + ":u",
+                "assistant_message_id": unit_id + ":a",
+                "next_user_message_id": unit_id + ":next" if reaction else None,
+                "started_at": ended_at - 10,
+                "ended_at": ended_at,
+                "source": "cli",
+                "model": "m",
+                "title": "t",
+                "parent_session_id": None,
+                "user_request": "Do it",
+                "assistant_response": "Done",
+                "previous_context_summary": "",
+                "next_user_reaction_text": reaction,
+                "tool_call_count": 0,
+                "api_call_count": 1,
+                "input_tokens": 1,
+                "output_tokens": 2,
+                "normalization_version": "normalization_v1",
+                "trace_events": [],
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = EvalDB(Path(tmp) / "evals.db")
+            db.upsert_eval_unit(unit("hermes:recent:turn:1", ended_at=990.0))
+            db.upsert_eval_unit(unit("hermes:reacted:turn:1", ended_at=995.0, reaction="No, that is wrong"))
+            db.upsert_eval_unit(unit("hermes:old:turn:1", ended_at=100.0))
+
+            due = db.list_due_units(limit=10, cooldown_seconds=120, now=1000.0)
+            self.assertEqual([row["id"] for row in due], ["hermes:old:turn:1", "hermes:reacted:turn:1"])
+
+            db.insert_llm_eval(
+                "hermes:old:turn:1",
+                prompt_version="instruction_health_v1",
+                judge_provider="test",
+                judge_model="test-model",
+                eval_data={"health_status": "succeed", "confidence": "high", "primary_reason": "ok", "barriers": []},
+            )
+            due_after_eval = db.list_due_units(limit=10, cooldown_seconds=120, now=1000.0)
+            self.assertEqual([row["id"] for row in due_after_eval], ["hermes:reacted:turn:1"])
 
 
 if __name__ == "__main__":

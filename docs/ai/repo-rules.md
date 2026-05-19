@@ -13,14 +13,14 @@ source_of_truth:
 
 ## Purpose
 
-This is the repository instruction authority for Ariadne Eval agents. `AGENTS.md` and `CLAUDE.md` should stay small and point here for project-specific rules.
+This is the repository instruction authority for Ariadne Eval agents. `AGENTS.md`, `CLAUDE.md`, and `GEMINI.md` should stay small and point here for project-specific rules.
 
 ## Read First
 
 - Read `.truthmark/config.yml` before changing Truthmark-controlled docs or routing.
 - Read `docs/truthmark/areas.md` and the relevant files under `docs/truthmark/areas/` before deciding where truth belongs.
-- Use `research/agent_instruction_health_evaluator_design1.md` as the original product-design reference.
-- Use `docs/design.md` as the normal design copy for project navigation.
+- Use `docs/design.md` for the active V1 architecture.
+- Use `research/agent_instruction_health_evaluator_design1.md` as the original product-design reference, not as the current V1 authority when it conflicts with `docs/design.md`.
 
 ## Truthmark Structure
 
@@ -32,10 +32,9 @@ This is the repository instruction authority for Ariadne Eval agents. `AGENTS.md
 
 ## Implementation Rules
 
-- Build the Hermes-first MVP before adding broad adapter abstractions.
-- Keep Hermes hook code passive, fast, and fail-open.
-- Do not call LLMs from hooks.
-- Do not mutate prompts, tool outputs, memory, skills, or configuration from the plugin.
+- Build the Hermes-first state.db ingestion and LLM judge path before adding broader runtime integrations.
+- Do not add a Hermes plugin, scheduler, dashboard, or non-Hermes adapter to V1 unless explicitly requested.
+- Keep the LLM judge in V1; deterministic signals alone are not the final rating mechanism.
 - Do not store or depend on hidden chain-of-thought or provider reasoning fields.
 - Prefer deterministic evidence before LLM judgment.
 - Keep the CLI useful before adding dashboards.

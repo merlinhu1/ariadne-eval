@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -129,7 +130,7 @@ class EvalDB:
         return con
 
     def migrate(self) -> None:
-        with self.connect() as con:
+        with closing(self.connect()) as con:
             con.executescript(SCHEMA_SQL)
             con.execute(
                 "INSERT OR REPLACE INTO eval_state (key, value, updated_at) VALUES (?, ?, ?)",
@@ -143,7 +144,7 @@ class EvalDB:
         row = dict(unit)
         row.setdefault("created_at", now)
         row["updated_at"] = now
-        with self.connect() as con:
+        with closing(self.connect()) as con:
             placeholders = ", ".join("?" for _ in EVAL_UNIT_FIELDS)
             assignments = ", ".join(f"{field}=excluded.{field}" for field in EVAL_UNIT_FIELDS if field != "id")
             con.execute(
@@ -168,7 +169,7 @@ class EvalDB:
     def replace_signals(self, eval_unit_id: str, signals: list[dict[str, Any]]) -> None:
         self.migrate()
         now = time.time()
-        with self.connect() as con:
+        with closing(self.connect()) as con:
             con.execute("DELETE FROM deterministic_signals WHERE eval_unit_id = ?", (eval_unit_id,))
             for signal in signals:
                 con.execute(
@@ -186,18 +187,206 @@ class EvalDB:
             params.append(since)
         sql += " ORDER BY started_at DESC, id DESC LIMIT ?"
         params.append(limit)
-        with self.connect() as con:
+        with closing(self.connect()) as con:
             return [dict(r) for r in con.execute(sql, params).fetchall()]
 
     def get_unit_with_trace(self, eval_unit_id: str) -> dict[str, Any]:
         self.migrate()
-        with self.connect() as con:
+        with closing(self.connect()) as con:
             row = con.execute("SELECT * FROM eval_units WHERE id = ?", (eval_unit_id,)).fetchone()
             if row is None:
                 raise KeyError(eval_unit_id)
             unit = dict(row)
             unit["trace_events"] = [dict(r) for r in con.execute("SELECT * FROM trace_events WHERE eval_unit_id = ? ORDER BY timestamp, id", (eval_unit_id,)).fetchall()]
             return unit
+
+    def list_due_units(
+        self,
+        limit: int = 50,
+        since: float | None = None,
+        reevaluate: bool = False,
+        cooldown_seconds: float = 7200,
+        now: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return imported units eligible for LLM judging.
+
+        A unit is due immediately when it has a next-user reaction, because that
+        reaction is useful retrospective evidence. Units without a reaction wait
+        for a cooldown so repeated eval batches do not spam the judge for fresh
+        last turns that may soon gain reaction evidence.
+        """
+        self.migrate()
+        if now is None:
+            now = time.time()
+        cutoff = now - max(0, cooldown_seconds)
+        sql = """
+            SELECT u.*
+            FROM eval_units u
+            WHERE u.assistant_response IS NOT NULL
+              AND (
+                u.next_user_message_id IS NOT NULL
+                OR u.next_user_reaction_text IS NOT NULL
+                OR COALESCE(u.ended_at, u.started_at, u.updated_at) <= ?
+              )
+        """
+        params: list[Any] = [cutoff]
+        if since is not None:
+            sql += " AND u.started_at >= ?"
+            params.append(since)
+        if not reevaluate:
+            sql += " AND NOT EXISTS (SELECT 1 FROM llm_evals e WHERE e.eval_unit_id = u.id AND e.evaluator_error IS NULL)"
+        sql += " ORDER BY u.started_at ASC, u.id ASC LIMIT ?"
+        params.append(limit)
+        with closing(self.connect()) as con:
+            return [dict(r) for r in con.execute(sql, params).fetchall()]
+
+    def insert_llm_eval(
+        self,
+        eval_unit_id: str,
+        *,
+        prompt_version: str,
+        judge_provider: str | None,
+        judge_model: str | None,
+        eval_data: dict[str, Any],
+        evaluator_error: str | None = None,
+    ) -> str:
+        self.migrate()
+        now = time.time()
+        eval_id = f"{eval_unit_id}:eval:{int(now * 1000)}"
+        health_status = str(eval_data.get("health_status") or "not_evaluable")
+        confidence = str(eval_data.get("confidence") or "low")
+        primary_reason = str(eval_data.get("primary_reason") or evaluator_error or "No primary reason supplied")
+        with closing(self.connect()) as con:
+            con.execute(
+                """
+                INSERT INTO llm_evals
+                    (id, eval_unit_id, prompt_version, judge_provider, judge_model, health_status, confidence, primary_reason, eval_json, evaluator_error, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    eval_id,
+                    eval_unit_id,
+                    prompt_version,
+                    judge_provider,
+                    judge_model,
+                    health_status,
+                    confidence,
+                    primary_reason,
+                    json.dumps(eval_data, ensure_ascii=False),
+                    evaluator_error,
+                    now,
+                ),
+            )
+            for barrier in eval_data.get("barriers") or []:
+                if not isinstance(barrier, dict):
+                    continue
+                barrier_type = str(barrier.get("type") or "").strip()
+                if not barrier_type:
+                    continue
+                con.execute(
+                    """
+                    INSERT INTO barriers
+                        (eval_id, eval_unit_id, barrier_type, severity, evidence, source, related_event_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        eval_id,
+                        eval_unit_id,
+                        barrier_type,
+                        str(barrier.get("severity") or "medium"),
+                        barrier.get("evidence"),
+                        barrier.get("source"),
+                        barrier.get("related_event_id"),
+                    ),
+                )
+            con.commit()
+        return eval_id
+
+    def get_latest_llm_eval(self, eval_unit_id: str) -> dict[str, Any] | None:
+        self.migrate()
+        with closing(self.connect()) as con:
+            row = con.execute(
+                "SELECT * FROM llm_evals WHERE eval_unit_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
+                (eval_unit_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            result = dict(row)
+            try:
+                result["eval_json"] = json.loads(result["eval_json"])
+            except Exception:
+                pass
+            result["barriers"] = [
+                dict(r) for r in con.execute(
+                    "SELECT * FROM barriers WHERE eval_id = ? ORDER BY id ASC",
+                    (result["id"],),
+                ).fetchall()
+            ]
+            return result
+
+    def list_llm_evals(self, statuses: list[str] | None = None, limit: int = 50, since: float | None = None) -> list[dict[str, Any]]:
+        self.migrate()
+        sql = """
+            SELECT e.*, u.source_session_id, u.source_turn_index, u.started_at, u.user_request, u.tool_call_count
+            FROM llm_evals e
+            JOIN eval_units u ON u.id = e.eval_unit_id
+            WHERE 1 = 1
+        """
+        params: list[Any] = []
+        if statuses:
+            sql += f" AND e.health_status IN ({', '.join('?' for _ in statuses)})"
+            params.extend(statuses)
+        if since is not None:
+            sql += " AND u.started_at >= ?"
+            params.append(since)
+        sql += " ORDER BY e.created_at DESC, e.id DESC LIMIT ?"
+        params.append(limit)
+        with closing(self.connect()) as con:
+            rows = [dict(r) for r in con.execute(sql, params).fetchall()]
+            for row in rows:
+                row["barriers"] = [
+                    dict(r) for r in con.execute(
+                        "SELECT * FROM barriers WHERE eval_id = ? ORDER BY id ASC",
+                        (row["id"],),
+                    ).fetchall()
+                ]
+            return rows
+
+    def summary(self, since: float | None = None) -> dict[str, Any]:
+        self.migrate()
+        params: list[Any] = []
+        where = ""
+        if since is not None:
+            where = "WHERE u.started_at >= ?"
+            params.append(since)
+        with closing(self.connect()) as con:
+            status_rows = con.execute(
+                f"""
+                SELECT e.health_status, COUNT(*) AS count
+                FROM llm_evals e JOIN eval_units u ON u.id = e.eval_unit_id
+                {where}
+                GROUP BY e.health_status
+                ORDER BY count DESC
+                """,
+                params,
+            ).fetchall()
+            barrier_rows = con.execute(
+                f"""
+                SELECT b.barrier_type, COUNT(*) AS count
+                FROM barriers b JOIN eval_units u ON u.id = b.eval_unit_id
+                {where}
+                GROUP BY b.barrier_type
+                ORDER BY count DESC, b.barrier_type ASC
+                LIMIT 20
+                """,
+                params,
+            ).fetchall()
+            total = sum(int(r["count"]) for r in status_rows)
+            return {
+                "evaluated_turns": total,
+                "statuses": {r["health_status"]: r["count"] for r in status_rows},
+                "top_barriers": [{"barrier_type": r["barrier_type"], "count": r["count"]} for r in barrier_rows],
+            }
 
 
 def default_eval_db_path(hermes_home: str | Path) -> Path:

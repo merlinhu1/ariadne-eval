@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -65,7 +66,7 @@ class HermesStateReader:
         return [field for field in wanted if field in columns and field not in HIDDEN_MESSAGE_FIELDS]
 
     def schema_version(self) -> int | None:
-        with self.connect() as con:
+        with closing(self.connect()) as con:
             tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             if "schema_version" not in tables:
                 return None
@@ -73,7 +74,7 @@ class HermesStateReader:
             return None if row is None else int(row[0])
 
     def list_sessions(self, limit: int = 20, since: float | None = None) -> list[dict[str, Any]]:
-        with self.connect() as con:
+        with closing(self.connect()) as con:
             fields = self._select_fields(con, "sessions", SESSION_FIELDS)
             sql = f"SELECT {', '.join(fields)} FROM sessions"
             params: list[Any] = []
@@ -85,7 +86,7 @@ class HermesStateReader:
             return [_row_to_dict(row) for row in con.execute(sql, params).fetchall()]  # type: ignore[list-item]
 
     def get_session(self, session_id: str) -> dict[str, Any]:
-        with self.connect() as con:
+        with closing(self.connect()) as con:
             fields = self._select_fields(con, "sessions", SESSION_FIELDS)
             row = con.execute(f"SELECT {', '.join(fields)} FROM sessions WHERE id = ?", (session_id,)).fetchone()
             result = _row_to_dict(row)
@@ -94,7 +95,7 @@ class HermesStateReader:
             return result
 
     def get_messages(self, session_id: str) -> list[dict[str, Any]]:
-        with self.connect() as con:
+        with closing(self.connect()) as con:
             fields = self._select_fields(con, "messages", MESSAGE_FIELDS)
             sql = f"SELECT {', '.join(fields)} FROM messages WHERE session_id = ? ORDER BY timestamp ASC, id ASC"
             return [_row_to_dict(row) for row in con.execute(sql, (session_id,)).fetchall()]  # type: ignore[list-item]
@@ -133,7 +134,3 @@ class HermesAdapter:
 
     def normalize_eval_units(self, raw_source: dict[str, Any]) -> list[dict[str, Any]]:
         return normalize_session(raw_source["session"], raw_source["messages"])
-
-    def load_trace_events(self, eval_unit_id: str) -> list[dict[str, Any]]:
-        # Hook event joining is implemented by the event reader in later phases.
-        return []

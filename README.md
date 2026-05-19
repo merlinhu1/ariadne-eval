@@ -2,65 +2,84 @@
 
 **A local-first instruction-health evaluator for Hermes Agent sessions.**
 
-Ariadne Eval is a lightweight post-run analysis tool for answering one practical question:
+Ariadne Eval answers one practical question:
 
-> For each thing I asked my agent to do, did it succeed, fail, get mishandled, or take a weirdly long path — and why?
+> For each thing I asked Hermes to do, where did it look failed, mishandled, or unnecessarily bumpy?
 
-It is intentionally narrower than Langfuse or a full observability dashboard. The MVP focuses on Hermes Agent first, reads Hermes' local session database, extracts deterministic trace evidence, and stores queryable evaluation data in a local sidecar SQLite database.
+V1 is intentionally small, but it still includes an **LLM judge**. The judge is the component that turns trace evidence into the actual health status (`succeed`, `failed`, `mishandled`, `prolonged`, or `not_evaluable`). The simplification is that V1 does **not** install a Hermes plugin, run a scheduler, build a dashboard, or support non-Hermes adapters.
 
 ---
 
-## What it does
-
-Ariadne Eval turns raw Hermes conversations into inspectable **per-user-request evaluation units**.
+## V1 pipeline
 
 ```text
-Hermes session
-  → Hermes state.db + passive hook events
-  → one eval unit per user request
-  → deterministic signals
-  → future LLM judge
-  → local evals.db
-  → CLI summaries for bumpy turns
+Hermes state.db
+  -> one eval unit per user request
+  -> state.db-derived tool evidence and next-user reaction
+  -> deterministic signals
+  -> compact judge input with aggressive preflight trimming
+  -> LLM judge using existing Hermes model config
+  -> local evals.db
+  -> CLI inspection
 ```
 
-It is designed to catch cases like:
+This is enough to find common problems:
 
-- the agent claimed it created a file but no tool evidence supports that;
-- a tool failed and the final answer did not recover;
+- a tool failed and the final response did not recover;
 - the user had to say “no, that is not what I asked”;
-- the agent repeated the same command or tool call unnecessarily;
-- the request eventually succeeded, but only after avoidable detours.
+- the same command/tool appears to repeat unnecessarily;
+- a request took far more tools/API calls/time than expected;
+- the assistant claimed completion but the trace evidence looks weak.
 
 ---
 
-## Why per-turn evaluation matters
+## Why state.db-only ingestion first?
 
-A single Hermes session can contain many user goals. Ariadne Eval evaluates each user message separately instead of scoring only the whole conversation.
+Hermes already records the durable conversation history in `state.db`: sessions, messages, tool-call/result messages, timestamps, token counts, model metadata, and session-level counters. That is the lowest-friction source of truth and it works on old sessions without requiring users to install anything in Hermes first.
 
-Each evaluation unit includes:
+The earlier passive-hook plugin idea is deferred. Hooks can improve exact runtime telemetry later, but they are not required for a useful V1.
+
+The LLM judge is triggered by an explicit CLI batch command, not by a resident scheduler. The V1 command is `agent-health eval --due`: it loads imported/due eval units from `evals.db`, builds the judge input, calls Hermes' existing model runtime, and writes `llm_evals` plus `barriers`. Judge routing prefers any configured `auxiliary.compression` model/provider first, then falls back to the Hermes main provider/model. Budget guardrails are intentionally conservative: by default one invocation considers at most 10 due candidates, scores them with deterministic signals, judges only units with priority score >= 1, makes at most 5 judge calls, skips already-successfully judged units, and waits 120 minutes before judging a no-reaction last turn. A future cron/systemd timer can call that same command, but the scheduler is just automation around the CLI, not a required Ariadne component.
+
+Deferred for later:
+
+- passive Hermes hook plugin;
+- `events.jsonl` runtime event cache;
+- exact tool start/end duration capture;
+- approval/interruption runtime telemetry;
+- scheduled background evaluation;
+- web/TUI dashboards;
+- non-Hermes adapters.
+
+Kept in V1:
+
+- deterministic signal extraction;
+- LLM judge via existing Hermes provider/model resolution;
+- strict JSON health statuses and barrier evidence;
+- local SQLite storage for judge results.
+
+---
+
+## Evaluation units
+
+Ariadne Eval evaluates **one user message at a time**, not only whole sessions.
+
+Each normalized unit contains:
 
 - current user request;
-- bounded previous conversation context;
-- assistant response for that turn;
-- tool calls and tool results between request and response;
-- deterministic signals such as tool errors, repeated tool calls, and duration;
-- the next user message, when available, as reaction evidence.
+- bounded previous context;
+- assistant response for that turn, when present;
+- tool messages between the request and response;
+- next user message, when available, as reaction evidence;
+- deterministic signals derived from the unit.
 
-That next user message is often the clearest signal that the prior turn went wrong:
-
-```text
-No, that is not what I asked.
-You did not create the file.
-Why did you search the web?
-Can you actually finish it?
-```
+The next user message is important because it often reveals whether the previous response was accepted, corrected, repeated, or complained about.
 
 ---
 
-## Health statuses
+## Health taxonomy
 
-Future LLM judging will assign one primary status per eval unit:
+The judge assigns one primary status:
 
 | Status | Meaning |
 |---|---|
@@ -70,15 +89,11 @@ Future LLM judging will assign one primary status per eval unit:
 | `prolonged` | The goal was achieved or nearly achieved, but with unnecessary loops, detours, or excessive steps. |
 | `not_evaluable` | There is not enough evidence to judge reliably. |
 
-Status precedence:
-
-```text
-failed > mishandled > prolonged > succeed > not_evaluable
-```
+Deterministic signals are not the final rating by themselves. They are the judge's evidence pack and the fallback inspection surface when the judge is unavailable.
 
 ---
 
-## Current MVP state
+## Current implemented pieces
 
 Implemented now:
 
@@ -86,21 +101,30 @@ Implemented now:
 - schema-tolerant session/message inspection;
 - hidden reasoning-field exclusion;
 - per-user-turn normalization;
-- next-user reaction capture;
+- next-user reaction capture/classification;
 - deterministic signal extraction;
-- sidecar SQLite schema;
-- passive Hermes plugin scaffold;
-- CLI commands for init, inspect, import, units, and signals;
+- deterministic priority prefiltering before judge calls;
+- aggressive preflight trimming for large documents, code blocks, image/data blobs, and bulky tool previews;
+- local SQLite sidecar schema including judge/barrier tables;
+- judge prompt with trim-policy guidance;
+- Hermes-provider judge client inheriting `auxiliary.compression` first, then the main model;
+- strict JSON judge parsing and repair retry;
+- manual `eval --due` command that triggers the LLM judge for due imported units;
+- `list`, `show`, and `summary` commands over judged results;
+- CLI commands for `init`, `inspect hermes`, `import hermes`, `units`, `signals`, `eval`, `list`, `show`, and `summary`;
 - Truthmark routing and behavior docs.
 
-Still planned:
+Still to implement for full V1:
 
-- LLM judge client through Hermes provider resolution;
-- strict JSON judge parsing and repair retry;
-- richer `list`, `show`, and `summary` commands;
-- full hook-event-to-eval-unit joining;
-- plugin installation command;
-- scheduled batch evaluation.
+- signal-noise cleanup for session-level API counts and context-compaction messages;
+- more fixtures around real Hermes provider-routing edge cases.
+
+Intentionally not in V1:
+
+- Hermes plugin installation or hook capture;
+- scheduler/cron integration;
+- dashboards;
+- generic multi-agent adapter framework.
 
 ---
 
@@ -114,13 +138,13 @@ python3 -m venv .venv
 pip install -e .
 ```
 
-The package exposes the placeholder CLI command:
+Run the placeholder CLI:
 
 ```bash
 agent-health --help
 ```
 
-If you are working directly from source without installing:
+Or directly from source:
 
 ```bash
 PYTHONPATH=src python3 -m agent_health.cli --help
@@ -160,48 +184,21 @@ Show deterministic signals for one eval unit:
 agent-health --hermes-home ~/.hermes signals hermes:<session_id>:turn:<n>
 ```
 
+Trigger judging manually:
+
+```bash
+agent-health --hermes-home ~/.hermes eval --due
+```
+
+No built-in scheduler is needed for V1. If automatic periodic evaluation becomes useful later, cron/systemd can run that same command, but keep the default budget guard or set explicit `--max-judge-calls`, `--limit`, and `--min-priority-score` values appropriate for the budget.
+
 Ariadne Eval stores local state under:
 
 ```text
 $HERMES_HOME/instruction-health/
   config.yaml
-  events.jsonl
   evals.db
   logs/
-```
-
----
-
-## Example future CLI output
-
-The visualizer is intended to make bumpy turns easy to find:
-
-```text
-Evaluated turns: 118
-succeed: 82
-failed: 7
-mishandled: 18
-prolonged: 9
-not_evaluable: 2
-
-Top barriers:
-1. user_correction: 11
-2. excessive_tool_calls: 8
-3. missing_tool_use: 6
-4. action_misrepresentation: 3
-```
-
-And eventually:
-
-```bash
-agent-health list --status failed,mishandled,prolonged --since 7d
-```
-
-```text
-TIME                STATUS       SESSION       TURN  BARRIERS                         REQUEST
-2026-05-19 10:42    mishandled   abc123        4     user_correction,missing_tool_use  "Create a markdown design doc..."
-2026-05-19 09:10    prolonged    def456        2     repeated_tool_loop,tool_error     "Fix the test failure..."
-2026-05-18 22:31    failed       ghi789        1     action_misrepresentation          "Send the email..."
 ```
 
 ---
@@ -210,27 +207,25 @@ TIME                STATUS       SESSION       TURN  BARRIERS                   
 
 ```mermaid
 graph TD
-    U[User talks to Hermes] --> H[Hermes agent loop]
-    H --> HS[Hermes state.db]
-    H --> PH[Passive Ariadne hook plugin]
-    PH --> EC[events.jsonl]
-    HS --> N[Hermes adapter / normalizer]
-    EC --> N
-    N --> EU[Per-user-turn eval units]
-    EU --> D[Deterministic signals]
-    D --> J[Future LLM judge]
-    J --> DB[local evals.db]
-    DB --> CLI[CLI visualizer]
+    HS[Hermes state.db] --> R[Hermes state reader]
+    R --> N[Per-user-turn normalizer]
+    N --> S[Deterministic signal extractor]
+    S --> T[Preflight trimming + deterministic priority]
+    T --> J[LLM judge]
+    J --> DB[(local evals.db)]
+    N --> DB
+    DB --> CLI[CLI inspection]
 ```
 
-Key design constraints:
+Key constraints:
 
-- Hermes `state.db` is the primary source of truth.
-- Hooks are passive, fast, and fail-open.
-- Hooks never call an LLM and never mutate Hermes behavior.
+- Hermes `state.db` is the only V1 ingestion source.
+- No Hermes plugin is required.
+- The LLM judge is required for final ratings.
+- The judge uses existing Hermes provider/model configuration by default, so no separate evaluator API key is required. It prefers `auxiliary.compression` when configured, then the Hermes main provider/model.
 - Hidden chain-of-thought/provider reasoning fields are excluded.
-- Deterministic signals remain useful even when the LLM judge is unavailable.
-- Storage is local by default; inference is local only if the configured Hermes model is local.
+- SQLite is local under the Hermes profile.
+- CLI usefulness comes before dashboards or automation.
 
 ---
 
@@ -251,23 +246,24 @@ Run Truthmark checks:
 
 Useful docs:
 
-- original design: [`research/agent_instruction_health_evaluator_design1.md`](research/agent_instruction_health_evaluator_design1.md)
-- navigable design copy: [`docs/design.md`](docs/design.md)
+- current V1 design: [`docs/design.md`](docs/design.md)
+- original design draft: [`research/agent_instruction_health_evaluator_design1.md`](research/agent_instruction_health_evaluator_design1.md)
 - architecture overview: [`docs/architecture/system-overview.md`](docs/architecture/system-overview.md)
 - repo rules for agents: [`docs/ai/repo-rules.md`](docs/ai/repo-rules.md)
 - behavior truth docs: [`docs/truth/`](docs/truth/)
 
 ---
 
-## Non-goals for the MVP
+## Non-goals for V1
 
-Ariadne Eval is not trying to be:
+Ariadne Eval V1 is not trying to be:
 
 - a hosted observability platform;
 - a Langfuse replacement;
+- a Hermes plugin;
 - a polished web dashboard;
 - a safety/policy evaluator;
 - an automatic prompt/memory/skill modifier;
 - a multi-user/team analytics product.
 
-The MVP goal is simpler: **make recent Hermes failures and bumpy turns locally visible, explainable, and queryable.**
+The V1 goal is simpler: **make recent Hermes failures and bumpy turns locally visible from state.db, judged by the existing Hermes model path, and stored in local SQLite.**

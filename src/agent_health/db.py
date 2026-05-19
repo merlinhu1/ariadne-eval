@@ -74,6 +74,10 @@ CREATE TABLE IF NOT EXISTS llm_evals (
     primary_reason TEXT NOT NULL,
     eval_json TEXT NOT NULL,
     evaluator_error TEXT,
+    judge_prompt_tokens INTEGER DEFAULT 0,
+    judge_completion_tokens INTEGER DEFAULT 0,
+    judge_total_tokens INTEGER DEFAULT 0,
+    judge_call_count INTEGER DEFAULT 0,
     created_at REAL NOT NULL
 );
 
@@ -132,6 +136,16 @@ class EvalDB:
     def migrate(self) -> None:
         with closing(self.connect()) as con:
             con.executescript(SCHEMA_SQL)
+            existing = {r[1] for r in con.execute("PRAGMA table_info(llm_evals)").fetchall()}
+            token_columns = {
+                "judge_prompt_tokens": "INTEGER DEFAULT 0",
+                "judge_completion_tokens": "INTEGER DEFAULT 0",
+                "judge_total_tokens": "INTEGER DEFAULT 0",
+                "judge_call_count": "INTEGER DEFAULT 0",
+            }
+            for column, ddl in token_columns.items():
+                if column not in existing:
+                    con.execute(f"ALTER TABLE llm_evals ADD COLUMN {column} {ddl}")
             con.execute(
                 "INSERT OR REPLACE INTO eval_state (key, value, updated_at) VALUES (?, ?, ?)",
                 ("schema_version", "eval_schema_v1", time.time()),
@@ -155,7 +169,9 @@ class EvalDB:
             con.execute("DELETE FROM trace_events WHERE eval_unit_id = ?", (row["id"],))
             for idx, event in enumerate(unit.get("trace_events") or [], start=1):
                 event_row = dict(event)
-                event_row.setdefault("id", f"{row['id']}:event:{idx}")
+                source_event_id = event_row.get("id") or event_row.get("source_event_id")
+                event_row["id"] = f"{row['id']}:event:{idx}"
+                event_row.setdefault("source_event_id", source_event_id)
                 event_row["eval_unit_id"] = row["id"]
                 if isinstance(event_row.get("raw_payload_json"), (dict, list)):
                     event_row["raw_payload_json"] = json.dumps(event_row["raw_payload_json"], ensure_ascii=False)
@@ -165,6 +181,23 @@ class EvalDB:
                     [event_row.get(field) for field in TRACE_FIELDS],
                 )
             con.commit()
+
+    def delete_stale_session_units(self, source_session_id: str, keep_ids: set[str]) -> int:
+        """Remove imported units for a session that no longer normalize.
+
+        This lets normalization fixes remove synthetic/context-compaction turns
+        from the sidecar instead of leaving stale due units behind.
+        """
+        self.migrate()
+        with closing(self.connect()) as con:
+            params: list[Any] = [str(source_session_id)]
+            sql = "DELETE FROM eval_units WHERE source_session_id = ?"
+            if keep_ids:
+                sql += f" AND id NOT IN ({', '.join('?' for _ in keep_ids)})"
+                params.extend(sorted(keep_ids))
+            cur = con.execute(sql, params)
+            con.commit()
+            return int(cur.rowcount or 0)
 
     def replace_signals(self, eval_unit_id: str, signals: list[dict[str, Any]]) -> None:
         self.migrate()
@@ -234,7 +267,7 @@ class EvalDB:
             sql += " AND u.started_at >= ?"
             params.append(since)
         if not reevaluate:
-            sql += " AND NOT EXISTS (SELECT 1 FROM llm_evals e WHERE e.eval_unit_id = u.id AND e.evaluator_error IS NULL)"
+            sql += " AND NOT EXISTS (SELECT 1 FROM llm_evals e WHERE e.eval_unit_id = u.id)"
         sql += " ORDER BY u.started_at ASC, u.id ASC LIMIT ?"
         params.append(limit)
         with closing(self.connect()) as con:
@@ -249,6 +282,10 @@ class EvalDB:
         judge_model: str | None,
         eval_data: dict[str, Any],
         evaluator_error: str | None = None,
+        judge_prompt_tokens: int = 0,
+        judge_completion_tokens: int = 0,
+        judge_total_tokens: int = 0,
+        judge_call_count: int = 0,
     ) -> str:
         self.migrate()
         now = time.time()
@@ -260,8 +297,8 @@ class EvalDB:
             con.execute(
                 """
                 INSERT INTO llm_evals
-                    (id, eval_unit_id, prompt_version, judge_provider, judge_model, health_status, confidence, primary_reason, eval_json, evaluator_error, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, eval_unit_id, prompt_version, judge_provider, judge_model, health_status, confidence, primary_reason, eval_json, evaluator_error, judge_prompt_tokens, judge_completion_tokens, judge_total_tokens, judge_call_count, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     eval_id,
@@ -274,6 +311,10 @@ class EvalDB:
                     primary_reason,
                     json.dumps(eval_data, ensure_ascii=False),
                     evaluator_error,
+                    int(judge_prompt_tokens or 0),
+                    int(judge_completion_tokens or 0),
+                    int(judge_total_tokens or 0),
+                    int(judge_call_count or 0),
                     now,
                 ),
             )
@@ -327,8 +368,14 @@ class EvalDB:
     def list_llm_evals(self, statuses: list[str] | None = None, limit: int = 50, since: float | None = None) -> list[dict[str, Any]]:
         self.migrate()
         sql = """
+            WITH latest AS (
+                SELECT eval_unit_id, MAX(created_at) AS max_created
+                FROM llm_evals
+                GROUP BY eval_unit_id
+            )
             SELECT e.*, u.source_session_id, u.source_turn_index, u.started_at, u.user_request, u.tool_call_count
             FROM llm_evals e
+            JOIN latest l ON l.eval_unit_id = e.eval_unit_id AND l.max_created = e.created_at
             JOIN eval_units u ON u.id = e.eval_unit_id
             WHERE 1 = 1
         """
@@ -362,8 +409,15 @@ class EvalDB:
         with closing(self.connect()) as con:
             status_rows = con.execute(
                 f"""
+                WITH latest AS (
+                    SELECT eval_unit_id, MAX(created_at) AS max_created
+                    FROM llm_evals
+                    GROUP BY eval_unit_id
+                )
                 SELECT e.health_status, COUNT(*) AS count
-                FROM llm_evals e JOIN eval_units u ON u.id = e.eval_unit_id
+                FROM llm_evals e
+                JOIN latest l ON l.eval_unit_id = e.eval_unit_id AND l.max_created = e.created_at
+                JOIN eval_units u ON u.id = e.eval_unit_id
                 {where}
                 GROUP BY e.health_status
                 ORDER BY count DESC
@@ -372,8 +426,16 @@ class EvalDB:
             ).fetchall()
             barrier_rows = con.execute(
                 f"""
+                WITH latest AS (
+                    SELECT eval_unit_id, MAX(created_at) AS max_created
+                    FROM llm_evals
+                    GROUP BY eval_unit_id
+                )
                 SELECT b.barrier_type, COUNT(*) AS count
-                FROM barriers b JOIN eval_units u ON u.id = b.eval_unit_id
+                FROM barriers b
+                JOIN llm_evals e ON e.id = b.eval_id
+                JOIN latest l ON l.eval_unit_id = e.eval_unit_id AND l.max_created = e.created_at
+                JOIN eval_units u ON u.id = b.eval_unit_id
                 {where}
                 GROUP BY b.barrier_type
                 ORDER BY count DESC, b.barrier_type ASC
@@ -382,10 +444,35 @@ class EvalDB:
                 params,
             ).fetchall()
             total = sum(int(r["count"]) for r in status_rows)
+            token_row = con.execute(
+                f"""
+                WITH latest AS (
+                    SELECT eval_unit_id, MAX(created_at) AS max_created
+                    FROM llm_evals
+                    GROUP BY eval_unit_id
+                )
+                SELECT
+                    COALESCE(SUM(e.judge_prompt_tokens), 0) AS prompt_tokens,
+                    COALESCE(SUM(e.judge_completion_tokens), 0) AS completion_tokens,
+                    COALESCE(SUM(e.judge_total_tokens), 0) AS total_tokens,
+                    COALESCE(SUM(e.judge_call_count), 0) AS calls
+                FROM llm_evals e
+                JOIN latest l ON l.eval_unit_id = e.eval_unit_id AND l.max_created = e.created_at
+                JOIN eval_units u ON u.id = e.eval_unit_id
+                {where}
+                """,
+                params,
+            ).fetchone()
             return {
                 "evaluated_turns": total,
                 "statuses": {r["health_status"]: r["count"] for r in status_rows},
                 "top_barriers": [{"barrier_type": r["barrier_type"], "count": r["count"]} for r in barrier_rows],
+                "judge_tokens": {
+                    "prompt_tokens": int(token_row["prompt_tokens"] or 0),
+                    "completion_tokens": int(token_row["completion_tokens"] or 0),
+                    "total_tokens": int(token_row["total_tokens"] or 0),
+                    "calls": int(token_row["calls"] or 0),
+                },
             }
 
 

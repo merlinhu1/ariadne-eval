@@ -29,10 +29,12 @@ This doc owns CLI commands, Hermes-home initialization, judge config defaults, s
 - `init` also prints the judge provider locality caveat because the judge uses Hermes provider/model resolution by default.
 - `import hermes` reads Hermes sessions, normalizes eval units, stores trace events, and stores deterministic signals.
 - `units` lists recently imported eval units from the sidecar database.
+- `bumps` lists deterministic event-level failures/bumps without calling the LLM judge; `bumps --summary` reports counts by bump type and severity.
 - `signals` recomputes and stores deterministic signals for one eval unit.
-- `eval --due` loads imported due units, recomputes deterministic signals, applies deterministic priority prefiltering, builds aggressively trimmed judge payloads, calls the LLM judge for selected units, and stores `llm_evals` plus `barriers`. The default run considers at most 10 candidates, skips priority-0 units, and is budget-gated to at most 5 judge calls.
+- `eval --due` loads imported due units, recomputes deterministic signals, applies deterministic priority prefiltering, builds aggressively trimmed judge payloads with a configurable judgement threshold (`strict`, `balanced`, or `relaxed`; default `strict`), calls the LLM judge for selected units, stores `llm_evals` plus `barriers`, and records provider-reported judge token usage. The default run considers at most 10 candidates, skips priority-0 units, and is budget-gated to at most 5 judge calls.
+- Event-level bump listing is deterministic and separate from LLM judging: one failed/error-looking tool event produces one `tool_error` bump.
 - Judge routing inherits Hermes models by trying configured `auxiliary.compression` first, then the Hermes main provider/model.
-- `list`, `show`, and `summary` query judged results from the sidecar database.
+- `list`, `show`, and `summary` query latest judged results from the sidecar database; `list --details` prints request, next-user reaction, observed outcome, and barrier evidence context for each row.
 - The V1 sidecar SQLite schema includes eval units, trace events, deterministic signals, LLM evals, barriers, and eval state tables.
 
 ## Core Rules
@@ -40,7 +42,7 @@ This doc owns CLI commands, Hermes-home initialization, judge config defaults, s
 - Evaluator state lives under the Hermes profile in `instruction-health/`.
 - V1 initialization creates `config.yaml`, `evals.db`, and `logs/`; it does not create `events.jsonl`.
 - Judge routing belongs to the Hermes runtime: Ariadne should prefer `auxiliary.compression` when configured and then fall back to the Hermes main provider/model.
-- Due selection should avoid budget spam: no realtime judging, no calls from import/list/show/signals, no successful re-eval unless requested, no-reaction units wait for the cooldown, deterministic prefiltering prioritizes corrections/tool errors/loops/prolonged runs, preflight trimming removes bulky low-value evidence before provider calls, and `--max-judge-calls` caps each invocation.
+- Due selection should avoid budget spam: no realtime judging, no calls from import/list/show/signals, no re-eval after any prior judgement unless `--reevaluate` is explicit, no-reaction units wait for the cooldown, deterministic prefiltering prioritizes corrections/tool errors/loops/prolonged runs, preflight trimming removes bulky low-value evidence before provider calls, and `--max-judge-calls` caps each invocation.
 - CLI errors should return a non-zero command result and print a concise error message.
 
 ## Flows And States

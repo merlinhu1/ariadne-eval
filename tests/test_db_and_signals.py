@@ -1,6 +1,7 @@
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from agent_health.db import EvalDB
@@ -40,11 +41,13 @@ class EvalDbAndSignalsTest(unittest.TestCase):
             }
             db.upsert_eval_unit(unit)
 
-            with sqlite3.connect(Path(tmp) / "evals.db") as con:
+            with closing(sqlite3.connect(Path(tmp) / "evals.db")) as con:
                 tables = {r[0] for r in con.execute("select name from sqlite_master where type='table'")}
                 self.assertTrue({"eval_units", "trace_events", "deterministic_signals", "llm_evals", "barriers", "eval_state"}.issubset(tables))
                 row = con.execute("select user_request, assistant_response from eval_units").fetchone()
+                columns = {r[1] for r in con.execute("pragma table_info(llm_evals)")}
             self.assertEqual(row, ("Do it", "Done"))
+            self.assertTrue({"judge_prompt_tokens", "judge_completion_tokens", "judge_total_tokens", "judge_call_count"}.issubset(columns))
 
     def test_signals_detect_tool_errors_repeats_duration_and_reaction(self):
         unit = {
@@ -120,6 +123,47 @@ class EvalDbAndSignalsTest(unittest.TestCase):
             )
             due_after_eval = db.list_due_units(limit=10, cooldown_seconds=120, now=1000.0)
             self.assertEqual([row["id"] for row in due_after_eval], ["hermes:reacted:turn:1"])
+
+    def test_due_units_skip_any_prior_judgement_unless_reevaluate(self):
+        unit = {
+            "id": "hermes:error:turn:1",
+            "framework": "hermes",
+            "source_session_id": "error",
+            "source_turn_index": 1,
+            "user_message_id": "u",
+            "assistant_message_id": "a",
+            "next_user_message_id": "next",
+            "started_at": 1.0,
+            "ended_at": 2.0,
+            "source": "cli",
+            "model": "m",
+            "title": "t",
+            "parent_session_id": None,
+            "user_request": "Do it",
+            "assistant_response": "Done",
+            "previous_context_summary": "",
+            "next_user_reaction_text": "Thanks",
+            "tool_call_count": 0,
+            "api_call_count": 1,
+            "input_tokens": 1,
+            "output_tokens": 2,
+            "normalization_version": "normalization_v1",
+            "trace_events": [],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            db = EvalDB(Path(tmp) / "evals.db")
+            db.upsert_eval_unit(unit)
+            db.insert_llm_eval(
+                "hermes:error:turn:1",
+                prompt_version="instruction_health_v1",
+                judge_provider=None,
+                judge_model=None,
+                eval_data={"health_status": "not_evaluable", "confidence": "low", "primary_reason": "judge failed", "barriers": []},
+                evaluator_error="provider failed",
+            )
+
+            self.assertEqual(db.list_due_units(limit=10, cooldown_seconds=0, now=10.0), [])
+            self.assertEqual([row["id"] for row in db.list_due_units(limit=10, cooldown_seconds=0, now=10.0, reevaluate=True)], ["hermes:error:turn:1"])
 
 
 if __name__ == "__main__":

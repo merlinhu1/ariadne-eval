@@ -4,6 +4,8 @@ import json
 import time
 from typing import Any
 
+from agent_health.signals import _event_error
+
 NORMALIZATION_VERSION = "normalization_v1"
 
 
@@ -93,9 +95,108 @@ def _tool_events_between(messages: list[dict[str, Any]], start_idx: int, end_idx
 
 
 def _looks_like_error(text: str) -> bool:
-    lowered = text.lower()
-    patterns = ["error", "traceback", "exception", 'exit_code": 1', "exit_code 1", "failed"]
-    return any(pattern in lowered for pattern in patterns)
+    return _event_error({"result_preview": text, "result_error": False})
+
+
+SYNTHETIC_USER_PREFIXES = (
+    "[context compaction",
+    "[the user sent context compaction",
+    "[your active task list was preserved across context compression]",
+    "you've reached the maximum number of tool-calling iterations allowed",
+    "you have reached the maximum number of tool-calling iterations allowed",
+)
+
+SYNTHETIC_ASSISTANT_PREFIXES = (
+    "[context compaction",
+)
+
+
+def _is_synthetic_text(text: str) -> bool:
+    lowered = text.strip().lower()
+    if not lowered:
+        return True
+    return any(lowered.startswith(prefix) for prefix in SYNTHETIC_USER_PREFIXES + SYNTHETIC_ASSISTANT_PREFIXES)
+
+
+def _is_document_upload_replay(message: dict[str, Any], following_messages: list[dict[str, Any]]) -> bool:
+    """Detect gateway-replayed document uploads before a compaction handoff.
+
+    Hermes state.db can contain the original Discord document-upload message at
+    the start of later compacted sessions, immediately followed by a few restored
+    assistant/tool rows and then a synthetic context-compaction message. Treat
+    that replay as runtime context, not as a fresh user request; otherwise the
+    same document becomes many eval units.
+    """
+    if message.get("role") != "user":
+        return False
+    text = _text(message.get("content")).strip().lower()
+    if not text.startswith("[the user sent a text document:"):
+        return False
+    try:
+        start_ts = float(message.get("timestamp") or 0)
+    except Exception:
+        start_ts = 0.0
+    for next_message in following_messages[:8]:
+        next_text = _text(next_message.get("content")).strip().lower()
+        if next_message.get("role") == "user":
+            if next_text.startswith("[context compaction"):
+                try:
+                    gap = abs(float(next_message.get("timestamp") or 0) - start_ts)
+                except Exception:
+                    gap = 999999
+                return gap <= 10.0
+            return False
+        if next_text.startswith("[context compaction"):
+            try:
+                gap = abs(float(next_message.get("timestamp") or 0) - start_ts)
+            except Exception:
+                gap = 999999
+            return gap <= 10.0
+    return False
+
+
+def is_synthetic_user_message(message: dict[str, Any]) -> bool:
+    if message.get("role") != "user":
+        return False
+    text = _text(message.get("content")).strip().lower()
+    return any(text.startswith(prefix) for prefix in SYNTHETIC_USER_PREFIXES)
+
+
+def is_synthetic_assistant_message(message: dict[str, Any]) -> bool:
+    if message.get("role") != "assistant":
+        return False
+    text = _text(message.get("content")).strip().lower()
+    return any(text.startswith(prefix) for prefix in SYNTHETIC_ASSISTANT_PREFIXES)
+
+
+def filter_synthetic_runtime_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove gateway/runtime housekeeping user turns and their assistant acks.
+
+    Context compaction handoff messages, preserved task lists, and max-iteration
+    continuation notices are injected as user-role messages but are not user
+    requests. Including them creates fake eval units and false next-user
+    reactions, so normalization drops them and their immediate assistant replies.
+    """
+    filtered: list[dict[str, Any]] = []
+    skip_until_next_user = False
+    for idx, message in enumerate(messages):
+        role = message.get("role")
+        following_messages = messages[idx + 1:]
+        if _is_document_upload_replay(message, following_messages):
+            skip_until_next_user = True
+            continue
+        if role == "user":
+            skip_until_next_user = False
+            if is_synthetic_user_message(message):
+                skip_until_next_user = True
+                continue
+        elif is_synthetic_assistant_message(message):
+            skip_until_next_user = True
+            continue
+        elif skip_until_next_user and role in {"assistant", "tool"}:
+            continue
+        filtered.append(message)
+    return filtered
 
 
 def normalize_session(
@@ -108,6 +209,7 @@ def normalize_session(
     max_assistant_response_chars: int = 8000,
 ) -> list[dict[str, Any]]:
     units: list[dict[str, Any]] = []
+    messages = filter_synthetic_runtime_messages(messages)
     turn_index = 0
     for idx, msg in enumerate(messages):
         if msg.get("role") != "user":

@@ -18,7 +18,7 @@ source_of_truth:
 
 - V1 should trigger judging through an explicit CLI batch command, `agent-health eval --due`.
 - Do not add a resident scheduler or daemon to V1.
-- Keep default judge batches budget-safe: score due candidates with deterministic signals, skip low-priority candidates by default, trim bulky documents/code/images/tool previews before provider calls, cap judge calls per invocation, skip successfully judged units unless `--reevaluate` is explicit, and defer no-reaction last turns behind a cooldown.
+- Keep default judge batches budget-safe: score due candidates with deterministic signals, skip low-priority candidates by default, trim bulky documents/code/images/tool previews before provider calls, cap judge calls per invocation, skip any previously judged unit unless `--reevaluate` is explicit, defer no-reaction last turns behind a cooldown, and record provider-reported judge token usage.
 - If periodic runs are needed later, use cron/systemd as a thin wrapper around the CLI command.
 
 ## Keep The LLM Judge In V1

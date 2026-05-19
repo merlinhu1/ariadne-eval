@@ -15,6 +15,7 @@ judge:
   temperature: 0
   max_retries: 2
   prompt_version: instruction_health_v1
+  judgement_threshold: strict
 """
 
 

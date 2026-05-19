@@ -5,11 +5,22 @@ from agent_health.cli import build_parser, judge_call_budget, select_priority_un
 
 class CliBudgetTest(unittest.TestCase):
     def test_eval_defaults_are_budget_safe(self):
-        args = build_parser().parse_args(["eval"])
+        parser = build_parser()
+        args = parser.parse_args(["eval", "--due"])
+
         self.assertEqual(args.limit, 10)
         self.assertEqual(args.max_judge_calls, 5)
         self.assertEqual(args.cooldown_minutes, 120)
         self.assertEqual(args.min_priority_score, 1)
+        self.assertEqual(args.judgement_threshold, "strict")
+
+    def test_bumps_command_exists_for_event_level_failures(self):
+        parser = build_parser()
+        args = parser.parse_args(["bumps", "--since", "5h", "--limit", "10"])
+
+        self.assertEqual(args.since, "5h")
+        self.assertEqual(args.limit, 10)
+        self.assertTrue(callable(args.func))
 
     def test_judge_call_budget_caps_large_requested_limits(self):
         self.assertEqual(judge_call_budget(limit=100, max_judge_calls=10), 10)

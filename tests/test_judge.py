@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from agent_health.db import EvalDB
-from agent_health.judge import HermesLLMJudgeClient, JudgeRoute, build_eval_payload, build_judge_routes
+from agent_health.judge import HermesLLMJudgeClient, JudgeRoute, TokenUsage, build_eval_payload, build_judge_routes, judgement_threshold_policy
 
 
 class JudgePreflightTrimTest(unittest.TestCase):
@@ -39,6 +39,22 @@ class JudgePreflightTrimTest(unittest.TestCase):
         self.assertIn("[trimmed", encoded)
         self.assertIn("[image omitted", encoded)
         self.assertNotIn("data:image/png;base64", encoded)
+
+
+class JudgeThresholdPolicyTest(unittest.TestCase):
+    def test_payload_includes_configurable_threshold_policy(self):
+        unit = {"id": "u", "framework": "hermes", "user_request": "Do it", "assistant_response": "Done", "trace_events": []}
+
+        payload = build_eval_payload(unit, [], judgement_threshold="strict")
+
+        self.assertEqual(payload["judgement_threshold"]["level"], "strict")
+        self.assertIn("Do not treat natural follow-up", payload["judgement_threshold"]["policy"])
+        self.assertIn("trace", payload["judgement_threshold"]["policy"].lower())
+
+    def test_unknown_threshold_falls_back_to_balanced(self):
+        policy = judgement_threshold_policy("unknown")
+
+        self.assertEqual(policy["level"], "balanced")
 
 
 class JudgeRouteTest(unittest.TestCase):
@@ -111,6 +127,40 @@ class JudgePersistenceTest(unittest.TestCase):
             self.assertEqual(latest["health_status"], "mishandled")
             self.assertEqual(latest["barriers"][0]["barrier_type"], "action_misrepresentation")
             self.assertEqual(db.list_due_units(limit=10), [])
+
+    def test_client_records_token_usage_from_successful_and_repair_calls(self):
+        class Usage:
+            prompt_tokens = 10
+            completion_tokens = 3
+            total_tokens = 13
+
+        class Message:
+            content = "not json"
+
+        class Choice:
+            message = Message()
+
+        class Response:
+            choices = [Choice()]
+            usage = Usage()
+
+        calls = []
+
+        def fake_call(route, messages, temperature=None, max_tokens=None):
+            calls.append(messages)
+            if len(calls) == 1:
+                return Response()
+            return '{"schema_version":"instruction_health_eval_v1","health_status":"succeed","confidence":"medium","goal_summary":"Answer","observed_outcome":"Answered","primary_reason":"The response addressed the request.","user_reaction":{"type":"none","used_as_evidence":false,"evidence":""},"barriers":[],"prolongation_evidence":{"tool_calls":0,"api_calls":0,"duration_seconds":1,"repeated_actions":[]},"missed_or_mishandled_requirements":[],"not_evaluable_reason":null}'
+
+        client = HermesLLMJudgeClient(
+            hermes_home=Path("/tmp/nonexistent"),
+            routes=[JudgeRoute(name="main", task=None, provider="openai-codex", model="main")],
+            call_func=fake_call,
+        )
+        result = client.evaluate_unit({"id": "u", "user_request": "Hi", "assistant_response": "Hello", "trace_events": []}, [])
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result.token_usage, TokenUsage(prompt_tokens=10, completion_tokens=3, total_tokens=13, calls=2))
 
     def test_client_falls_back_from_compression_to_main(self):
         calls = []

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections import Counter
+import json
+import re
 from typing import Any
 
 from agent_health.reactions import classify_reaction
@@ -25,8 +27,40 @@ def _severity(count: int | float, threshold: int | float) -> str | None:
 def _event_error(event: dict[str, Any]) -> bool:
     if bool(event.get("result_error")):
         return True
-    preview = str(event.get("result_preview") or "").lower()
-    return any(p in preview for p in ["traceback", "exception", "error", "exit_code 1", 'exit_code": 1', "failed"])
+    preview = str(event.get("result_preview") or "")
+    lower = preview.lower()
+    try:
+        parsed = json.loads(preview)
+    except Exception:
+        parsed = None
+    stripped = lower.lstrip()
+    if parsed is None and (
+        stripped.startswith('{"content"')
+        or stripped.startswith("{'content'")
+        or stripped.startswith('{"matches"')
+        or stripped.startswith('{"total_count"')
+    ):
+        return False
+    if isinstance(parsed, dict):
+        exit_code = parsed.get("exit_code")
+        if isinstance(exit_code, int) and exit_code != 0:
+            return True
+        if isinstance(exit_code, str) and exit_code.strip() not in {"", "0"}:
+            return True
+        error = parsed.get("error")
+        if error not in (None, "", False):
+            return True
+        output = str(parsed.get("output") or "").lower()
+        if "traceback" in output or re.search(r"\b(exception|command failed|failed:)\b", output):
+            return True
+        return False
+    if re.search(r"exit[_ -]?code[\"']?\s*[:=]\s*[1-9]", lower):
+        return True
+    if "traceback" in lower:
+        return True
+    if re.search(r"\b(exception|command failed|failed:)\b", lower):
+        return True
+    return False
 
 
 def _signal(name: str, value: Any, severity: str | None = None, evidence: str | None = None) -> dict[str, str | None]:

@@ -1,10 +1,10 @@
 You are evaluating the health of an AI agent's handling of one user request.
 
-Assess the agent charitably but evidence-first. The user may clarify ambiguous intent.
-Do not mark a run as bad merely because the user added a new request later.
-Do mark a run as mishandled if the next user message shows that the agent misunderstood,
-failed to complete the requested action, over-claimed completion, used tools badly, or gave
-a response that forced unnecessary correction.
+Assess the agent charitably and evidence-first. The goal is to trace real Hermes bumps/failures between a request and its response, not to punish natural conversation flow.
+Use the supplied `judgement_threshold` policy as the controlling standard.
+Do not mark a run as bad merely because the user added a new request, asked a setup question, uploaded a document, clarified underspecified intent, or naturally continued later.
+Use the next user message only as supporting evidence. It is not enough by itself unless it is an explicit correction/complaint/repeated same request and it matches trace or assistant-response evidence.
+Under strict judgement, require concrete evidence from the trace, tool sequence, deterministic signals, or assistant response before assigning failed, mishandled, or prolonged.
 
 Use the full supplied trace summary, not only the final answer.
 Do not reward verbosity.
@@ -50,11 +50,11 @@ Return exactly one JSON object matching this schema:
 }
 
 Status definitions:
-- succeed: the user goal was achieved without meaningful avoidable friction.
-- failed: the user goal was not achieved.
-- mishandled: the agent attempted or partially achieved the goal but misunderstood, over-claimed, used bad tools, missed requirements, or needed avoidable correction.
-- prolonged: the goal was achieved or nearly achieved but the trace contains unnecessary loops, detours, or excessive steps.
-- not_evaluable: there is insufficient evidence to judge.
+- failed: concrete trace/assistant evidence shows the user goal was not achieved. Do not infer failure from a natural follow-up alone.
+- mishandled: concrete evidence shows the agent misunderstood, over-claimed, used bad tools, missed explicit requirements, or needed avoidable correction. Under strict judgement, ambiguous or underspecified user intent should be not_evaluable, not mishandled.
+- prolonged: the goal was achieved or nearly achieved but the trace contains unnecessary loops, detours, repeated tool calls, excessive tool/API use, or excessive duration.
+- succeed: the response reasonably addressed the request and no concrete trace/assistant bump is visible.
+- not_evaluable: there is insufficient evidence to judge, the message is a document upload without an explicit task, or the next user message is just a natural follow-up/new instruction.
 
 Status precedence: failed > mishandled > prolonged > succeed > not_evaluable.
 Use not_evaluable only when evidence is insufficient.

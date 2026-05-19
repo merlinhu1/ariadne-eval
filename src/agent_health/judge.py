@@ -33,6 +33,22 @@ class JudgeRoute:
     model: str | None
 
 
+@dataclass(frozen=True)
+class TokenUsage:
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    calls: int = 0
+
+    def __add__(self, other: "TokenUsage") -> "TokenUsage":
+        return TokenUsage(
+            prompt_tokens=self.prompt_tokens + other.prompt_tokens,
+            completion_tokens=self.completion_tokens + other.completion_tokens,
+            total_tokens=self.total_tokens + other.total_tokens,
+            calls=self.calls + other.calls,
+        )
+
+
 @dataclass
 class JudgeResult:
     eval_data: dict[str, Any]
@@ -40,6 +56,7 @@ class JudgeResult:
     judge_model: str | None
     raw_output: str
     evaluator_error: str | None = None
+    token_usage: TokenUsage = TokenUsage()
 
 
 def _non_empty(value: Any) -> str | None:
@@ -111,6 +128,34 @@ def _extract_response_text(response: Any) -> str:
         except Exception:
             pass
     return str(response)
+
+
+def _extract_token_usage(response: Any, *, calls: int = 1) -> TokenUsage:
+    usage = None
+    if isinstance(response, dict):
+        usage = response.get("usage")
+    else:
+        usage = getattr(response, "usage", None)
+    if not usage:
+        return TokenUsage(calls=calls)
+    def get(name: str) -> int:
+        if isinstance(usage, dict):
+            value = usage.get(name)
+        else:
+            value = getattr(usage, name, None)
+        try:
+            return int(value or 0)
+        except Exception:
+            return 0
+    prompt_tokens = get("prompt_tokens") or get("input_tokens")
+    completion_tokens = get("completion_tokens") or get("output_tokens")
+    total_tokens = get("total_tokens") or (prompt_tokens + completion_tokens)
+    return TokenUsage(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
+        calls=calls,
+    )
 
 
 def extract_json_object(text: str) -> dict[str, Any]:
@@ -290,7 +335,44 @@ def build_trace_summary(unit: dict[str, Any], signals: list[dict[str, Any]]) -> 
     }
 
 
-def build_eval_payload(unit: dict[str, Any], signals: list[dict[str, Any]]) -> dict[str, Any]:
+JUDGEMENT_THRESHOLDS = {
+    "strict": {
+        "level": "strict",
+        "policy": (
+            "Require concrete evidence from the trace between the request and response before assigning failed, mishandled, or prolonged. "
+            "Do not treat natural follow-up, setup questions, new instructions, document uploads, or ambiguous continuation as barriers by themselves. "
+            "A next-user message is supporting evidence only when it explicitly corrects/complains/repeats the same request and is consistent with trace or assistant-response evidence. "
+            "Prefer succeed when the response reasonably handled the request and no tool/trace bump is visible; prefer not_evaluable when user intent was underspecified."
+        ),
+    },
+    "balanced": {
+        "level": "balanced",
+        "policy": (
+            "Use both trace evidence and user reaction. Do not mark natural follow-ups or new requests as failures, but allow explicit correction/complaint to support a barrier "
+            "when it matches the assistant response or trace."
+        ),
+    },
+    "relaxed": {
+        "level": "relaxed",
+        "policy": (
+            "Flag likely friction even when evidence is indirect, but still separate natural follow-up and scope change from real agent failure."
+        ),
+    },
+}
+
+
+def judgement_threshold_policy(level: str | None) -> dict[str, str]:
+    key = str(level or "balanced").strip().lower().replace("_", "-")
+    if key in {"conservative", "high", "hard"}:
+        key = "strict"
+    elif key in {"normal", "medium", "standard"}:
+        key = "balanced"
+    elif key in {"low", "loose"}:
+        key = "relaxed"
+    return dict(JUDGEMENT_THRESHOLDS.get(key, JUDGEMENT_THRESHOLDS["balanced"]))
+
+
+def build_eval_payload(unit: dict[str, Any], signals: list[dict[str, Any]], *, judgement_threshold: str | None = "strict") -> dict[str, Any]:
     return {
         "eval_unit_id": unit.get("id"),
         "framework": unit.get("framework"),
@@ -323,6 +405,7 @@ def build_eval_payload(unit: dict[str, Any], signals: list[dict[str, Any]]) -> d
             "images_and_data_urls": "omitted unless represented by surrounding text",
             "field_limits_chars": FIELD_LIMITS,
         },
+        "judgement_threshold": judgement_threshold_policy(judgement_threshold),
         "trace_summary": build_trace_summary(unit, signals),
     }
 
@@ -343,12 +426,14 @@ class HermesLLMJudgeClient:
         call_func: Callable[[JudgeRoute, list[dict[str, str]], float | None, int | None], Any] | None = None,
         max_tokens: int = 1200,
         temperature: float | None = 0,
+        judgement_threshold: str | None = "strict",
     ):
         self.hermes_home = Path(hermes_home).expanduser()
         self._routes = routes
         self._call_func = call_func
         self.max_tokens = max_tokens
         self.temperature = temperature
+        self.judgement_threshold = judgement_threshold
 
     def resolve_routes(self) -> list[JudgeRoute]:
         if self._routes is not None:
@@ -398,7 +483,7 @@ class HermesLLMJudgeClient:
         return call_llm(**kwargs)
 
     def _messages_for_unit(self, unit: dict[str, Any], signals: list[dict[str, Any]]) -> list[dict[str, str]]:
-        payload = build_eval_payload(unit, signals)
+        payload = build_eval_payload(unit, signals, judgement_threshold=self.judgement_threshold)
         prompt = load_prompt_template()
         return [
             {"role": "system", "content": prompt},
@@ -416,13 +501,16 @@ class HermesLLMJudgeClient:
         errors: list[str] = []
         for route in self.resolve_routes():
             raw = ""
+            token_usage = TokenUsage()
             try:
                 response = self._call_hermes_llm(route, messages, self.temperature, self.max_tokens)
+                token_usage += _extract_token_usage(response)
                 raw = _extract_response_text(response)
                 try:
                     data = validate_eval_json(extract_json_object(raw))
                 except Exception as parse_err:
                     repair_response = self._call_hermes_llm(route, self._repair_messages(raw), self.temperature, self.max_tokens)
+                    token_usage += _extract_token_usage(repair_response)
                     raw = _extract_response_text(repair_response)
                     data = validate_eval_json(extract_json_object(raw))
                 return JudgeResult(
@@ -430,6 +518,7 @@ class HermesLLMJudgeClient:
                     judge_provider=route.name if route.name in {"auxiliary.compression", "main", "auto"} else route.provider,
                     judge_model=route.model or data.get("judge_model"),
                     raw_output=raw,
+                    token_usage=token_usage,
                 )
             except Exception as exc:
                 errors.append(f"{route.name}: {exc}")

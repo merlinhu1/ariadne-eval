@@ -1,6 +1,7 @@
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from agent_health.adapters.hermes import HermesStateReader
@@ -8,9 +9,9 @@ from agent_health.adapters.hermes import HermesStateReader
 
 def make_state_db(home: Path) -> Path:
     db_path = home / "state.db"
-    con = sqlite3.connect(db_path)
-    con.executescript(
-        """
+    with closing(sqlite3.connect(db_path)) as con:
+        con.executescript(
+            """
         CREATE TABLE sessions (
             id TEXT PRIMARY KEY, source TEXT NOT NULL, user_id TEXT, model TEXT,
             model_config TEXT, system_prompt TEXT, parent_session_id TEXT,
@@ -32,10 +33,9 @@ def make_state_db(home: Path) -> Path:
             (2, 's1', 'assistant', 'hi', 12.0, 'hidden', 'hidden2'),
             (1, 's1', 'user', 'hello', 11.0, NULL, NULL),
             (3, 's1', 'tool', '{"exit_code":0}', 13.0, NULL, NULL);
-        """
-    )
-    con.commit()
-    con.close()
+            """
+        )
+        con.commit()
     return db_path
 
 

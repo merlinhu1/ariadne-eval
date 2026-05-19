@@ -8,6 +8,7 @@ source_of_truth:
   - ../../../src/agent_health/normalize.py
   - ../../../src/agent_health/reactions.py
   - ../../../src/agent_health/signals.py
+  - ../../../src/agent_health/bumps.py
   - ../../../src/agent_health/prompts/instruction_health_v1.txt
   - ../../../src/agent_health/judge.py
 ---
@@ -20,7 +21,7 @@ This behavior turns Hermes messages into per-user-request evaluation units, extr
 
 ## Scope
 
-This doc owns user-turn normalization, previous-context selection, next-user reaction capture, reaction classification, deterministic signal extraction, and the V1 judge evidence contract.
+This doc owns user-turn normalization, previous-context selection, next-user reaction capture, reaction classification, deterministic signal extraction, deterministic bump-event extraction, and the V1 judge evidence contract.
 
 ## Current Behavior
 
@@ -28,24 +29,28 @@ This doc owns user-turn normalization, previous-context selection, next-user rea
 - The normalizer attaches the next final assistant response when available.
 - Tool messages between the user request and assistant response become trace events with capped result previews and error heuristics.
 - Previous context is limited to recent user/assistant pairs and capped by character count.
-- The next user message after the assistant response is stored as reaction evidence when available.
+- The next user message after the assistant response is stored as reaction evidence when available, but natural follow-ups and new instructions are not treated as failures by themselves.
 - Deterministic signals include tool count, API-call count, turn duration, tool-error count, repeated tool count, next-user reaction type, and assistant completion-claim heuristic.
-- Judge payload construction aggressively trims large documents, large code fences, image/data blobs, and bulky tool previews before LLM calls.
+- Deterministic bump events are extracted separately from judge status: each tool-error trace event becomes one `tool_error` bump, and additional bump types cover repeated tool loops, excessive tool/API calls, excessive duration, incomplete turns, and completion claims after tool errors.
+- The normalizer filters runtime housekeeping user-role messages (context-compaction handoffs, preserved task-list notices, max-tool-iteration continuation notices) and replayed document-upload messages that immediately precede compaction handoffs, so compacted sessions do not double-count the same original request.
+- Judge payloads include a configurable judgement threshold (`strict`, `balanced`, or `relaxed`). The default strict threshold requires concrete trace/assistant evidence before marking barriers and treats natural follow-ups as non-failures.
 - The LLM judge is the final V1 rating mechanism and returns strict JSON with health status, confidence, primary reason, user reaction, barriers, and not-evaluable reason.
 
 ## Core Rules
 
 - Evaluate at user-turn granularity rather than only whole sessions.
 - Current user request and assistant response should preserve diagnostic intent/evidence up to configured caps, not raw bulk content.
-- User reaction is evidence, not absolute proof of failure.
+- User reaction is supporting evidence, not absolute proof of failure; under strict judgement it cannot create a barrier without matching trace or assistant-response evidence.
 - Deterministic signals are first-class judge evidence, prefilter evidence, and fallback inspection data.
+- Deterministic bump events are first-class failure/bump records; they are counted independently of the LLM's turn-level success judgement, so one turn can have multiple concrete failures.
 - Deterministic signals prioritize judge budget toward corrections, complaints, repeated requests, tool errors, repeated-tool loops, and prolonged runs.
-- Deterministic signals do not replace the LLM judge for final ratings.
+- Deterministic signals do not replace the LLM judge for final ratings. Judge calls store reported prompt/completion/total token usage so eval runs can be audited for cost.
 
 ## Flows And States
 
-- Normalization scans messages in timestamp order, increments a turn index for each user message, and builds an eval-unit id as `hermes:<session_id>:turn:<n>`.
+- Normalization scans messages in timestamp order, filters runtime housekeeping user-role messages (context-compaction handoffs, preserved task-list notices, max-tool-iteration continuation notices, and replayed document uploads adjacent to compaction handoffs), increments a turn index for each real user message, and builds an eval-unit id as `hermes:<session_id>:turn:<n>`.
 - Signal extraction consumes an eval unit plus trace events and emits named values with optional severity and evidence.
+- Bump extraction consumes the same eval unit plus trace events and emits event-level failure/bump records. `tool_error` is per trace event, not aggregated.
 - Judge input combines the eval unit, trimmed trace evidence, deterministic signals, next-user reaction, and a preflight trim policy. The judge client validates strict JSON and performs one repair retry for malformed output, so a malformed model response can cost one extra call for that unit.
 
 ## Contracts

@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ariadne-eval"
+version = "0.1.0"
+description = "Local instruction-health evaluator for Hermes Agent sessions"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+agent-health = "agent_health.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_health"]

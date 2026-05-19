@@ -1,0 +1,11 @@
+evaluation:
+  cooldown_minutes_after_session_end: 30
+  cooldown_minutes_after_inactive_turn: 120
+  evaluate_last_turn_without_reaction: true
+  reevaluate_previous_turn_when_next_user_reaction_arrives: true
+thresholds:
+  prolonged_tool_calls: 8
+  prolonged_api_calls: 4
+  prolonged_turn_minutes: 10
+  repeated_same_tool_same_args: 3
+  long_tool_result_chars: 8000

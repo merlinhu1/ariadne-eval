@@ -1,0 +1,3 @@
+You are evaluating the health of an AI agent's handling of one user request.
+
+Assess the agent charitably but evidence-first. Use the full supplied trace, not only the final answer. Return exactly one JSON object with schema_version, health_status, confidence, goal_summary, observed_outcome, primary_reason, user_reaction, barriers, prolongation_evidence, missed_or_mishandled_requirements, and not_evaluable_reason.

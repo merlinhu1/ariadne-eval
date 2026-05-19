@@ -4,7 +4,7 @@
 
 Ariadne Eval answers one practical question:
 
-> For each thing I asked Hermes to do, where did it look failed, mishandled, or unnecessarily bumpy?
+> For each thing I asked Hermes to do, where did it show deterministic incidents or judged anomalies?
 
 V1 is intentionally small, but it still includes an **LLM judge**. The judge is the component that turns trace evidence into the actual health status (`succeed`, `failed`, `mishandled`, `prolonged`, or `not_evaluable`). The simplification is that V1 does **not** install a Hermes plugin, run a scheduler, build a dashboard, or support non-Hermes adapters.
 
@@ -39,7 +39,7 @@ Hermes already records the durable conversation history in `state.db`: sessions,
 
 The earlier passive-hook plugin idea is deferred. Hooks can improve exact runtime telemetry later, but they are not required for a useful V1.
 
-The LLM judge is triggered by an explicit CLI batch command, not by a resident scheduler. The V1 command is `agent-health eval --due`: it loads imported/due eval units from `evals.db`, builds the judge input, calls Hermes' existing model runtime, and writes `llm_evals` plus `barriers`. Judge routing prefers any configured `auxiliary.compression` model/provider first, then falls back to the Hermes main provider/model. Budget guardrails are intentionally conservative: by default one invocation considers at most 10 due candidates, filters them by deterministic priority, makes at most 5 judge calls, skips any unit that already has a prior judgement unless `--reevaluate` is explicit, waits 120 minutes before judging a no-reaction last turn, records provider-reported judge token usage, and prints per-eval context around request, reaction, outcome, and barrier evidence. Judge strictness is configurable with `--judgement-threshold strict|balanced|relaxed`; the default `strict` threshold requires concrete trace/assistant evidence and should not mark natural follow-ups as barriers. A future cron/systemd timer can call that same command, but the scheduler is just automation around the CLI, not a required Ariadne component.
+The LLM judge is triggered by an explicit CLI batch command, not by a resident scheduler. The V1 command is `agent-health eval --due`: it loads imported/due eval units from `evals.db`, builds the judge input, calls Hermes' existing model runtime, and writes `llm_evals` plus anomaly rows (stored in the legacy `barriers` table). Judge routing prefers any configured `auxiliary.compression` model/provider first, then falls back to the Hermes main provider/model. Budget guardrails are intentionally conservative: by default one invocation considers at most 10 due candidates, filters them by deterministic priority, makes at most 5 judge calls, skips any unit that already has a prior judgement unless `--reevaluate` is explicit, waits 120 minutes before judging a no-reaction last turn, records provider-reported judge token usage, and prints per-eval context around request, reaction, outcome, and anomaly evidence. Judge strictness is configurable with `--judgement-threshold strict|balanced|relaxed`; the default `strict` threshold requires concrete trace/assistant evidence and should not mark natural follow-ups as anomalies. A future cron/systemd timer can call that same command, but the scheduler is just automation around the CLI, not a required Ariadne component.
 
 Deferred for later:
 
@@ -55,7 +55,7 @@ Kept in V1:
 
 - deterministic signal extraction;
 - LLM judge via existing Hermes provider/model resolution;
-- strict JSON health statuses and barrier evidence;
+- strict JSON health statuses and anomaly evidence;
 - local SQLite storage for judge results.
 
 ---
@@ -103,16 +103,16 @@ Implemented now:
 - per-user-turn normalization, including filtering for context-compaction/runtime handoff messages and replayed document uploads;
 - next-user reaction capture/classification;
 - deterministic signal extraction;
-- deterministic event-level bump extraction, including one `tool_error` bump per failed/error-looking tool event;
+- deterministic event-level incident extraction, including one `tool_error` incident per failed/error-looking tool event;
 - deterministic priority prefiltering before judge calls;
 - aggressive preflight trimming for large documents, code blocks, image/data blobs, and bulky tool previews;
-- local SQLite sidecar schema including judge/barrier tables;
+- local SQLite sidecar schema including judge/anomaly tables (the persisted table remains `barriers` for compatibility);
 - judge prompt with trim-policy and configurable-threshold guidance;
 - Hermes-provider judge client inheriting `auxiliary.compression` first, then the main model;
 - strict JSON judge parsing and repair retry;
 - manual `eval --due` command that triggers the LLM judge for due imported units;
 - `list`, `show`, and `summary` commands over judged results;
-- CLI commands for `init`, `inspect hermes`, `import hermes`, `units`, `signals`, `eval`, `list`, `show`, and `summary`;
+- CLI commands for `init`, `inspect hermes`, `import hermes`, `units`, `incidents`, `signals`, `eval`, `list`, `show`, and `summary`;
 - Truthmark routing and behavior docs.
 
 Still to implement for full V1:
@@ -267,4 +267,4 @@ Ariadne Eval V1 is not trying to be:
 - an automatic prompt/memory/skill modifier;
 - a multi-user/team analytics product.
 
-The V1 goal is simpler: **make recent Hermes failures and bumpy turns locally visible from state.db, judged by the existing Hermes model path, and stored in local SQLite.**
+The V1 goal is simpler: **make recent Hermes incidents and judged anomalies locally visible from state.db, judged by the existing Hermes model path, and stored in local SQLite.**

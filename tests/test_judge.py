@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from agent_health.db import EvalDB
-from agent_health.judge import HermesLLMJudgeClient, JudgeRoute, TokenUsage, build_eval_payload, build_judge_routes, judgement_threshold_policy
+from agent_health.judge import HermesLLMJudgeClient, JudgeRoute, TokenUsage, build_eval_payload, build_judge_routes, judgement_threshold_policy, validate_eval_json
 
 
 class JudgePreflightTrimTest(unittest.TestCase):
@@ -56,6 +56,21 @@ class JudgeThresholdPolicyTest(unittest.TestCase):
 
         self.assertEqual(policy["level"], "balanced")
 
+    def test_eval_json_accepts_anomalies_as_judge_output_name(self):
+        result = validate_eval_json({
+            "schema_version": "instruction_health_eval_v1",
+            "health_status": "mishandled",
+            "confidence": "high",
+            "primary_reason": "The agent over-claimed completion.",
+            "user_reaction": {"type": "correction", "used_as_evidence": True, "evidence": "No"},
+            "anomalies": [
+                {"type": "unsupported_claim", "severity": "high", "source": "assistant_response", "evidence": "Claimed done without evidence"}
+            ],
+        })
+
+        self.assertEqual(result["anomalies"][0]["type"], "unsupported_claim")
+        self.assertEqual(result["barriers"][0]["type"], "unsupported_claim")
+
 
 class JudgeRouteTest(unittest.TestCase):
     def test_routes_prefer_auxiliary_compression_then_main_model(self):
@@ -75,7 +90,7 @@ class JudgeRouteTest(unittest.TestCase):
 
 
 class JudgePersistenceTest(unittest.TestCase):
-    def test_persists_llm_eval_and_barriers(self):
+    def test_persists_llm_eval_and_anomalies(self):
         with tempfile.TemporaryDirectory() as tmp:
             db = EvalDB(Path(tmp) / "evals.db")
             db.upsert_eval_unit({
@@ -116,7 +131,7 @@ class JudgePersistenceTest(unittest.TestCase):
                     "health_status": "mishandled",
                     "confidence": "high",
                     "primary_reason": "The user says the requested file was not created.",
-                    "barriers": [
+                    "anomalies": [
                         {"type": "action_misrepresentation", "severity": "high", "source": "user_reaction", "evidence": "No, you didn't create it"}
                     ],
                 },
@@ -125,6 +140,7 @@ class JudgePersistenceTest(unittest.TestCase):
             latest = db.get_latest_llm_eval("hermes:s1:turn:1")
             self.assertEqual(latest["id"], eval_id)
             self.assertEqual(latest["health_status"], "mishandled")
+            self.assertEqual(latest["anomalies"][0]["anomaly_type"], "action_misrepresentation")
             self.assertEqual(latest["barriers"][0]["barrier_type"], "action_misrepresentation")
             self.assertEqual(db.list_due_units(limit=10), [])
 

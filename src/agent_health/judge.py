@@ -15,7 +15,7 @@ EVAL_SCHEMA_VERSION = "instruction_health_eval_v1"
 HEALTH_STATUSES = {"succeed", "failed", "mishandled", "prolonged", "not_evaluable"}
 CONFIDENCES = {"high", "medium", "low"}
 REACTION_TYPES = {"acceptance", "continuation", "clarification", "correction", "complaint", "repeated_request", "scope_change", "unrelated", "unknown", "none"}
-BARRIER_TYPES = {
+ANOMALY_TYPES = {
     "tool_error", "repeated_tool_loop", "unnecessary_tool_use", "missing_tool_use",
     "bad_tool_selection", "external_action_not_verified", "action_misrepresentation",
     "misread_instruction", "missed_requirement", "unsupported_claim", "format_mismatch",
@@ -23,6 +23,9 @@ BARRIER_TYPES = {
     "user_correction", "user_repeated_request", "interrupted_or_incomplete",
     "excessive_duration", "excessive_api_calls", "excessive_tool_calls", "context_loss",
 }
+
+# Backward-compatible internal name for historical DB columns and existing callers.
+BARRIER_TYPES = ANOMALY_TYPES
 
 
 @dataclass(frozen=True)
@@ -204,26 +207,30 @@ def validate_eval_json(data: dict[str, Any]) -> dict[str, Any]:
         "used_as_evidence": bool(reaction.get("used_as_evidence", False)),
         "evidence": str(reaction.get("evidence") or ""),
     }
-    barriers = normalized.get("barriers")
-    if not isinstance(barriers, list):
-        barriers = []
-    cleaned_barriers = []
-    for barrier in barriers:
-        if not isinstance(barrier, dict):
+    anomalies = normalized.get("anomalies")
+    if not isinstance(anomalies, list):
+        anomalies = normalized.get("barriers")
+    if not isinstance(anomalies, list):
+        anomalies = []
+    cleaned_anomalies = []
+    for anomaly in anomalies:
+        if not isinstance(anomaly, dict):
             continue
-        barrier_type = str(barrier.get("type") or "").strip()
-        if barrier_type not in BARRIER_TYPES:
+        anomaly_type = str(anomaly.get("type") or "").strip()
+        if anomaly_type not in ANOMALY_TYPES:
             continue
-        severity = str(barrier.get("severity") or "medium").strip().lower()
+        severity = str(anomaly.get("severity") or "medium").strip().lower()
         if severity not in {"low", "medium", "high"}:
             severity = "medium"
-        cleaned_barriers.append({
-            "type": barrier_type,
+        cleaned_anomalies.append({
+            "type": anomaly_type,
             "severity": severity,
-            "source": str(barrier.get("source") or "trace"),
-            "evidence": str(barrier.get("evidence") or ""),
+            "source": str(anomaly.get("source") or "trace"),
+            "evidence": str(anomaly.get("evidence") or ""),
         })
-    normalized["barriers"] = cleaned_barriers
+    normalized["anomalies"] = cleaned_anomalies
+    # Backward-compatible alias for stored historical JSON and older callers.
+    normalized["barriers"] = cleaned_anomalies
     normalized.setdefault("prolongation_evidence", {"tool_calls": 0, "api_calls": 0, "duration_seconds": None, "repeated_actions": []})
     normalized.setdefault("missed_or_mishandled_requirements", [])
     normalized.setdefault("not_evaluable_reason", None)
@@ -340,15 +347,15 @@ JUDGEMENT_THRESHOLDS = {
         "level": "strict",
         "policy": (
             "Require concrete evidence from the trace between the request and response before assigning failed, mishandled, or prolonged. "
-            "Do not treat natural follow-up, setup questions, new instructions, document uploads, or ambiguous continuation as barriers by themselves. "
+            "Do not treat natural follow-up, setup questions, new instructions, document uploads, or ambiguous continuation as anomalies by themselves. "
             "A next-user message is supporting evidence only when it explicitly corrects/complains/repeats the same request and is consistent with trace or assistant-response evidence. "
-            "Prefer succeed when the response reasonably handled the request and no tool/trace bump is visible; prefer not_evaluable when user intent was underspecified."
+            "Prefer succeed when the response reasonably handled the request and no tool/trace incident is visible; prefer not_evaluable when user intent was underspecified."
         ),
     },
     "balanced": {
         "level": "balanced",
         "policy": (
-            "Use both trace evidence and user reaction. Do not mark natural follow-ups or new requests as failures, but allow explicit correction/complaint to support a barrier "
+            "Use both trace evidence and user reaction. Do not mark natural follow-ups or new requests as failures, but allow explicit correction/complaint to support an anomaly "
             "when it matches the assistant response or trace."
         ),
     },
@@ -492,7 +499,7 @@ class HermesLLMJudgeClient:
 
     def _repair_messages(self, invalid_output: str) -> list[dict[str, str]]:
         return [
-            {"role": "system", "content": "Repair the following evaluator output into exactly one valid JSON object matching schema_version instruction_health_eval_v1. Return JSON only."},
+            {"role": "system", "content": "Repair the following evaluator output into exactly one valid JSON object matching schema_version instruction_health_eval_v1. Prefer `anomalies` for judge findings; `barriers` is accepted as a legacy alias. Return JSON only."},
             {"role": "user", "content": invalid_output[:12000]},
         ]
 
@@ -532,6 +539,7 @@ class HermesLLMJudgeClient:
             "observed_outcome": "The evaluator could not obtain a valid LLM judge response.",
             "primary_reason": f"Evaluator error: {error}"[:500],
             "user_reaction": {"type": "unknown", "used_as_evidence": False, "evidence": ""},
+            "anomalies": [],
             "barriers": [],
             "prolongation_evidence": {"tool_calls": unit.get("tool_call_count") or 0, "api_calls": unit.get("api_call_count") or 0, "duration_seconds": None, "repeated_actions": []},
             "missed_or_mishandled_requirements": [],

@@ -22,7 +22,7 @@ Hermes state.db
   -> deterministic signals
   -> compact judge input
   -> LLM judge through existing Hermes provider/model config
-  -> structured status + barriers
+  -> structured status + anomalies
   -> local evals.db
   -> CLI inspection
 ```
@@ -38,7 +38,7 @@ agent-health import hermes --since 24h
 agent-health eval --due --limit 50
 ```
 
-`eval --due` loads imported eval units that need judging, builds compact judge inputs, calls the judge through Hermes provider/model resolution, then stores `llm_evals` and `barriers` rows. A future scheduler can wrap this command with cron/systemd, but scheduling is not itself a product component for V1.
+`eval --due` loads imported eval units that need judging, builds compact judge inputs, calls the judge through Hermes provider/model resolution, then stores `llm_evals` and anomaly rows. A future scheduler can wrap this command with cron/systemd, but scheduling is not itself a product component for V1.
 
 ## V1 Components
 
@@ -65,12 +65,12 @@ agent-health eval --due --limit 50
 4. LLM judge
    - Uses the existing Hermes provider/model path by default.
    - Consumes the normalized eval unit, compact trace evidence, deterministic signals, and next-user reaction.
-   - Returns strict JSON with one health status, confidence, primary reason, and barriers.
+   - Returns strict JSON with one health status, confidence, primary reason, and anomalies.
    - Stores provider/model metadata so judge behavior is auditable.
 
 5. Sidecar SQLite
    - `$HERMES_HOME/instruction-health/evals.db`.
-   - Tables needed in V1: `eval_units`, `trace_events`, `deterministic_signals`, `llm_evals`, `barriers`, `eval_state`.
+   - Tables needed in V1: `eval_units`, `trace_events`, `deterministic_signals`, `llm_evals`, `barriers` (legacy anomaly storage), `eval_state`.
 
 6. CLI
    - `init`.

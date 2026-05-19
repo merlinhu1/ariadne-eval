@@ -19,8 +19,8 @@ Ariadne Eval V1 is a local, state.db-ingested instruction-health evaluator for H
 - **Hermes state reader**: reads Hermes `state.db` sessions and messages without importing hidden reasoning fields.
 - **Normalizer**: converts each user request into one evaluation unit with the assistant response, tool-message evidence, prior context, and next user reaction when available.
 - **Signal extractor**: computes deterministic evidence such as tool errors, repeated calls, duration, and reaction type.
-- **LLM judge**: consumes preflight-trimmed normalized evidence and assigns the health status, confidence, primary reason, and barriers.
-- **Sidecar eval DB**: stores normalized units, state.db-derived trace/tool events, deterministic signals, judge results, barriers, and eval state in local SQLite.
+- **LLM judge**: consumes preflight-trimmed normalized evidence and assigns the health status, confidence, primary reason, and anomalies.
+- **Sidecar eval DB**: stores normalized units, state.db-derived trace/tool events, deterministic signals, judge results, anomalies, and eval state in local SQLite.
 
 ## V1 Architecture
 
@@ -48,7 +48,7 @@ Ariadne Eval does not need a resident scheduler to run the LLM judge. V1 exposes
 - Decision (2026-05-19): V1 ingestion is state.db-only; passive hook capture is deferred until the state.db evaluator proves useful.
 - Decision (2026-05-19): V1 includes LLM judging via existing Hermes provider/model config so there is no separate evaluator API key; judge routing prefers configured `auxiliary.compression`, then main.
 - Decision (2026-05-19): Judge batches are manually triggered and budget-gated; default `eval --due` considers 10 candidates, judges only deterministic-priority units, performs at most 5 judge calls, and defers no-reaction turns for 120 minutes.
-- Decision (2026-05-19): V1 stores eval units, trace events derived from state.db messages, deterministic signals, LLM evals, barriers, and eval state.
+- Decision (2026-05-19): V1 stores eval units, trace events derived from state.db messages, deterministic signals, LLM evals, anomalies, and eval state.
 - Decision (2026-05-19): Visualization starts as CLI inspection backed by SQLite, not a web dashboard.
 
 ## Rationale

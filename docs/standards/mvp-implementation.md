@@ -26,7 +26,7 @@ source_of_truth:
 - V1 must have an LLM judge path for final health ratings.
 - Deterministic signals are evidence and fallback inspection data, not a replacement for the judge.
 - The judge should use Hermes' existing provider/model configuration by default rather than a separate evaluator API key. It should prefer configured `auxiliary.compression` first, then fall back to the Hermes main provider/model.
-- Judge output should be strict JSON with status, confidence, primary reason, and barriers; malformed JSON should get one repair attempt before storing an evaluator error.
+- Judge output should be strict JSON with status, confidence, primary reason, and anomalies; malformed JSON should get one repair attempt before storing an evaluator error.
 
 ## Keep It Local And Inspectable
 

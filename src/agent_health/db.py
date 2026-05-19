@@ -318,11 +318,14 @@ class EvalDB:
                     now,
                 ),
             )
-            for barrier in eval_data.get("barriers") or []:
-                if not isinstance(barrier, dict):
+            anomalies = eval_data.get("anomalies")
+            if not isinstance(anomalies, list):
+                anomalies = eval_data.get("barriers") or []
+            for anomaly in anomalies:
+                if not isinstance(anomaly, dict):
                     continue
-                barrier_type = str(barrier.get("type") or "").strip()
-                if not barrier_type:
+                anomaly_type = str(anomaly.get("type") or "").strip()
+                if not anomaly_type:
                     continue
                 con.execute(
                     """
@@ -333,11 +336,11 @@ class EvalDB:
                     (
                         eval_id,
                         eval_unit_id,
-                        barrier_type,
-                        str(barrier.get("severity") or "medium"),
-                        barrier.get("evidence"),
-                        barrier.get("source"),
-                        barrier.get("related_event_id"),
+                        anomaly_type,
+                        str(anomaly.get("severity") or "medium"),
+                        anomaly.get("evidence"),
+                        anomaly.get("source"),
+                        anomaly.get("related_event_id"),
                     ),
                 )
             con.commit()
@@ -362,6 +365,13 @@ class EvalDB:
                     "SELECT * FROM barriers WHERE eval_id = ? ORDER BY id ASC",
                     (result["id"],),
                 ).fetchall()
+            ]
+            result["anomalies"] = [
+                {
+                    **barrier,
+                    "anomaly_type": barrier.get("barrier_type"),
+                }
+                for barrier in result["barriers"]
             ]
             return result
 
@@ -396,6 +406,13 @@ class EvalDB:
                         "SELECT * FROM barriers WHERE eval_id = ? ORDER BY id ASC",
                         (row["id"],),
                     ).fetchall()
+                ]
+                row["anomalies"] = [
+                    {
+                        **barrier,
+                        "anomaly_type": barrier.get("barrier_type"),
+                    }
+                    for barrier in row["barriers"]
                 ]
             return rows
 
@@ -466,6 +483,7 @@ class EvalDB:
             return {
                 "evaluated_turns": total,
                 "statuses": {r["health_status"]: r["count"] for r in status_rows},
+                "top_anomalies": [{"anomaly_type": r["barrier_type"], "count": r["count"]} for r in barrier_rows],
                 "top_barriers": [{"barrier_type": r["barrier_type"], "count": r["count"]} for r in barrier_rows],
                 "judge_tokens": {
                     "prompt_tokens": int(token_row["prompt_tokens"] or 0),

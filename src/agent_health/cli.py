@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 from agent_health.adapters.hermes import HermesAdapter, HermesStateReader, default_hermes_home
-from agent_health.bumps import extract_bump_events, summarize_bump_events
+from agent_health.incidents import extract_incident_events, summarize_incident_events
 from agent_health.config import init_home
 from agent_health.db import EvalDB, default_eval_db_path
 from agent_health.judge import HermesLLMJudgeClient, PROMPT_VERSION, TokenUsage
@@ -142,30 +142,33 @@ def cmd_units(args) -> int:
     return 0
 
 
-def cmd_bumps(args) -> int:
+def cmd_incidents(args) -> int:
     home = Path(args.hermes_home).expanduser()
     db = EvalDB(default_eval_db_path(home))
-    bumps: list[dict] = []
+    incidents: list[dict] = []
     for row in db.list_units(limit=args.unit_limit, since=_parse_since(args.since)):
         unit = db.get_unit_with_trace(row["id"])
-        bumps.extend(extract_bump_events(unit))
-    bumps.sort(key=lambda b: (b.get("started_at") or 0, b.get("eval_unit_id") or "", b.get("related_event_id") or ""), reverse=True)
-    selected = bumps[: max(0, args.limit)]
+        incidents.extend(extract_incident_events(unit))
+    incidents.sort(key=lambda i: (i.get("started_at") or 0, i.get("eval_unit_id") or "", i.get("related_event_id") or ""), reverse=True)
+    selected = incidents[: max(0, args.limit)]
     if args.summary:
-        _print_json(summarize_bump_events(bumps))
+        _print_json(summarize_incident_events(incidents))
         return 0
-    for bump in selected:
-        request = _one_line(bump.get("user_request"), 110)
-        evidence = _one_line(bump.get("evidence"), 180)
-        event = f" event={bump.get('related_event_id')}" if bump.get("related_event_id") else ""
-        tool = f" tool={bump.get('tool_name')}" if bump.get("tool_name") else ""
+    for incident in selected:
+        request = _one_line(incident.get("user_request"), 110)
+        evidence = _one_line(incident.get("evidence"), 180)
+        event = f" event={incident.get('related_event_id')}" if incident.get("related_event_id") else ""
+        tool = f" tool={incident.get('tool_name')}" if incident.get("tool_name") else ""
         print(
-            f"{bump.get('started_at') or '-':>12}  {bump.get('bump_type'):<30} {bump.get('severity'):<6} "
-            f"{bump.get('source_session_id')} turn={bump.get('source_turn_index')}{event}{tool}  {evidence}"
+            f"{incident.get('started_at') or '-':>12}  {incident.get('incident_type'):<30} {incident.get('severity'):<6} "
+            f"{incident.get('source_session_id')} turn={incident.get('source_turn_index')}{event}{tool}  {evidence}"
         )
         if args.details:
             print(f"  request: {request}")
     return 0
+
+
+cmd_bumps = cmd_incidents
 
 
 def cmd_signals(args) -> int:
@@ -178,9 +181,12 @@ def cmd_signals(args) -> int:
     return 0
 
 
-def _format_barriers(row: dict) -> str:
-    barriers = row.get("barriers") or []
-    return ",".join(str(b.get("barrier_type") or b.get("type")) for b in barriers[:5]) or "-"
+def _format_anomalies(row: dict) -> str:
+    anomalies = row.get("anomalies") or row.get("barriers") or []
+    return ",".join(str(a.get("anomaly_type") or a.get("barrier_type") or a.get("type")) for a in anomalies[:5]) or "-"
+
+
+_format_barriers = _format_anomalies
 
 
 def _one_line(value: object, limit: int = 180) -> str:
@@ -195,13 +201,13 @@ def _print_eval_context(unit: dict, eval_data: dict, *, prefix: str = "  ") -> N
     observed = eval_data.get("observed_outcome")
     if observed:
         print(f"{prefix}outcome: {_one_line(observed, 180)}")
-    barriers = eval_data.get("barriers") or []
-    for barrier in barriers[:3]:
-        if not isinstance(barrier, dict):
+    anomalies = eval_data.get("anomalies") or eval_data.get("barriers") or []
+    for anomaly in anomalies[:3]:
+        if not isinstance(anomaly, dict):
             continue
         print(
-            f"{prefix}barrier: {barrier.get('type') or '-'} "
-            f"({barrier.get('severity') or 'medium'}): {_one_line(barrier.get('evidence'), 180)}"
+            f"{prefix}anomaly: {anomaly.get('type') or '-'} "
+            f"({anomaly.get('severity') or 'medium'}): {_one_line(anomaly.get('evidence'), 180)}"
         )
 
 
@@ -298,7 +304,7 @@ def cmd_list(args) -> int:
     statuses = [s.strip() for s in args.status.split(",") if s.strip()] if args.status else None
     for row in db.list_llm_evals(statuses=statuses, limit=args.limit, since=_parse_since(args.since)):
         request = (row.get("user_request") or "").replace("\n", " ")[:80]
-        print(f"{row.get('started_at') or '-':>12}  {row['health_status']:<12} {row['confidence']:<6} {row['source_session_id']} turn={row['source_turn_index']} tokens={row.get('judge_total_tokens') or 0} barriers={_format_barriers(row)}  {request}")
+        print(f"{row.get('started_at') or '-':>12}  {row['health_status']:<12} {row['confidence']:<6} {row['source_session_id']} turn={row['source_turn_index']} tokens={row.get('judge_total_tokens') or 0} anomalies={_format_anomalies(row)}  {request}")
         if args.details:
             unit = db.get_unit_with_trace(row["eval_unit_id"])
             eval_json = row.get("eval_json") if isinstance(row.get("eval_json"), dict) else {}
@@ -354,12 +360,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_units.add_argument("--limit", type=int, default=50)
     p_units.set_defaults(func=cmd_units)
 
-    p_bumps = sub.add_parser("bumps", help="List deterministic event-level bumps/failures without calling the LLM judge")
+    p_incidents = sub.add_parser("incidents", help="List deterministic event-level incidents/anomalies without calling the LLM judge")
+    p_incidents.add_argument("--since")
+    p_incidents.add_argument("--limit", type=int, default=50, help="Maximum incident events to print")
+    p_incidents.add_argument("--unit-limit", type=int, default=200, help="Maximum imported eval units to scan")
+    p_incidents.add_argument("--details", action="store_true", help="Show request context below each incident")
+    p_incidents.add_argument("--summary", action="store_true", help="Print incident counts by type/severity as JSON")
+    p_incidents.set_defaults(func=cmd_incidents)
+
+    p_bumps = sub.add_parser("bumps", help="Legacy alias for incidents")
     p_bumps.add_argument("--since")
-    p_bumps.add_argument("--limit", type=int, default=50, help="Maximum bump events to print")
+    p_bumps.add_argument("--limit", type=int, default=50, help="Maximum incident events to print")
     p_bumps.add_argument("--unit-limit", type=int, default=200, help="Maximum imported eval units to scan")
-    p_bumps.add_argument("--details", action="store_true", help="Show request context below each bump")
-    p_bumps.add_argument("--summary", action="store_true", help="Print bump counts by type/severity as JSON")
+    p_bumps.add_argument("--details", action="store_true", help="Show request context below each incident")
+    p_bumps.add_argument("--summary", action="store_true", help="Print incident counts by type/severity as JSON")
     p_bumps.set_defaults(func=cmd_bumps)
 
     p_signals = sub.add_parser("signals")
@@ -374,7 +388,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--cooldown-minutes", type=int, default=120, help="Wait this long before judging last turns without next-user reaction evidence")
     p_eval.add_argument("--min-priority-score", type=int, default=1, help="Skip due units below this deterministic priority score; use 0 to sample low-priority units")
     p_eval.add_argument("--reevaluate", action="store_true", help="Explicitly rerun the judge for units that already have any prior judgement")
-    p_eval.add_argument("--judgement-threshold", choices=["strict", "balanced", "relaxed"], default="strict", help="How much evidence the judge needs before marking a barrier; strict focuses on concrete trace/assistant evidence")
+    p_eval.add_argument("--judgement-threshold", choices=["strict", "balanced", "relaxed"], default="strict", help="How much evidence the judge needs before marking an anomaly; strict focuses on concrete trace/assistant evidence")
     p_eval.add_argument("--dry-run", action="store_true", help="Show due units without calling the judge model")
     p_eval.add_argument("--max-tokens", type=int, default=1200)
     p_eval.set_defaults(func=cmd_eval)
@@ -383,7 +397,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_list.add_argument("--status", default="failed,mishandled,prolonged")
     p_list.add_argument("--since")
     p_list.add_argument("--limit", type=int, default=50)
-    p_list.add_argument("--details", action="store_true", help="Show request, next-user reaction, outcome, and barrier evidence below each row")
+    p_list.add_argument("--details", action="store_true", help="Show request, next-user reaction, outcome, and anomaly evidence below each row")
     p_list.set_defaults(func=cmd_list)
 
     p_show = sub.add_parser("show")

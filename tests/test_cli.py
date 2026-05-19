@@ -14,7 +14,15 @@ class CliBudgetTest(unittest.TestCase):
         self.assertEqual(args.min_priority_score, 1)
         self.assertEqual(args.judgement_threshold, "strict")
 
-    def test_bumps_command_exists_for_event_level_failures(self):
+    def test_incidents_command_exists_for_event_level_failures(self):
+        parser = build_parser()
+        args = parser.parse_args(["incidents", "--since", "5h", "--limit", "10"])
+
+        self.assertEqual(args.since, "5h")
+        self.assertEqual(args.limit, 10)
+        self.assertTrue(callable(args.func))
+
+    def test_bumps_command_remains_a_legacy_alias(self):
         parser = build_parser()
         args = parser.parse_args(["bumps", "--since", "5h", "--limit", "10"])
 

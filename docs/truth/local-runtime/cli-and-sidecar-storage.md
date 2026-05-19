@@ -23,19 +23,19 @@ This doc owns CLI commands, Hermes-home initialization, judge config defaults, s
 
 ## Current Behavior
 
-- The CLI exposes `init`, `inspect hermes`, `import hermes`, `units`, `signals`, `eval`, `list`, `show`, and `summary` commands.
+- The CLI exposes `init`, `inspect hermes`, `import hermes`, `units`, `incidents`, `signals`, `eval`, `list`, `show`, and `summary` commands.
 - `init` creates the instruction-health home under the Hermes profile and migrates the sidecar eval database.
 - `init` prints that V1 reads Hermes state.db and does not require a plugin, scheduler, or dashboard.
 - `init` also prints the judge provider locality caveat because the judge uses Hermes provider/model resolution by default.
 - `import hermes` reads Hermes sessions, normalizes eval units, stores trace events, and stores deterministic signals.
 - `units` lists recently imported eval units from the sidecar database.
-- `bumps` lists deterministic event-level failures/bumps without calling the LLM judge; `bumps --summary` reports counts by bump type and severity.
+- `incidents` lists deterministic event-level incidents without calling the LLM judge; `incidents --summary` reports counts by incident type and severity. `bumps` remains a legacy alias.
 - `signals` recomputes and stores deterministic signals for one eval unit.
-- `eval --due` loads imported due units, recomputes deterministic signals, applies deterministic priority prefiltering, builds aggressively trimmed judge payloads with a configurable judgement threshold (`strict`, `balanced`, or `relaxed`; default `strict`), calls the LLM judge for selected units, stores `llm_evals` plus `barriers`, and records provider-reported judge token usage. The default run considers at most 10 candidates, skips priority-0 units, and is budget-gated to at most 5 judge calls.
-- Event-level bump listing is deterministic and separate from LLM judging: one failed/error-looking tool event produces one `tool_error` bump.
+- `eval --due` loads imported due units, recomputes deterministic signals, applies deterministic priority prefiltering, builds aggressively trimmed judge payloads with a configurable judgement threshold (`strict`, `balanced`, or `relaxed`; default `strict`), calls the LLM judge for selected units, stores `llm_evals` plus anomalies (persisted in the legacy `barriers` table), and records provider-reported judge token usage. The default run considers at most 10 candidates, skips priority-0 units, and is budget-gated to at most 5 judge calls.
+- Event-level incident listing is deterministic and separate from LLM judging: one failed/error-looking tool event produces one `tool_error` incident.
 - Judge routing inherits Hermes models by trying configured `auxiliary.compression` first, then the Hermes main provider/model.
-- `list`, `show`, and `summary` query latest judged results from the sidecar database; `list --details` prints request, next-user reaction, observed outcome, and barrier evidence context for each row.
-- The V1 sidecar SQLite schema includes eval units, trace events, deterministic signals, LLM evals, barriers, and eval state tables.
+- `list`, `show`, and `summary` query latest judged results from the sidecar database; `list --details` prints request, next-user reaction, observed outcome, and anomaly evidence context for each row.
+- The V1 sidecar SQLite schema includes eval units, trace events, deterministic signals, LLM evals, anomalies (legacy `barriers` table), and eval state tables.
 
 ## Core Rules
 
@@ -49,7 +49,7 @@ This doc owns CLI commands, Hermes-home initialization, judge config defaults, s
 
 - Init flow: resolve Hermes home, create config/log paths, migrate SQLite, print the state.db-only ingestion note and judge provider caveat.
 - Import flow: discover sessions, normalize each session into units, upsert units and trace events, replace deterministic signals.
-- Eval flow: a manual `agent-health eval --due` command loads due units, extracts signals, applies deterministic priority and max-call budget gates, trims bulky judge evidence, calls the judge, and stores `llm_evals` plus `barriers` rows.
+- Eval flow: a manual `agent-health eval --due` command loads due units, extracts signals, applies deterministic priority and max-call budget gates, trims bulky judge evidence, calls the judge, and stores `llm_evals` plus anomaly rows in the legacy `barriers` table.
 - Scheduling is not a V1 runtime behavior; future cron/systemd automation may invoke the same manual eval command.
 
 ## Contracts
@@ -62,11 +62,11 @@ This doc owns CLI commands, Hermes-home initialization, judge config defaults, s
 
 - Decision (2026-05-19): The MVP uses a local SQLite sidecar database rather than JSONL for evaluations.
 - Decision (2026-05-19): Manual CLI batches trigger the judge in V1; scheduled background evaluation is only optional later automation around the same command.
-- Decision (2026-05-19): LLM eval and barrier tables are part of V1 because judged ratings are the core output.
+- Decision (2026-05-19): LLM eval and anomaly tables are part of V1 because judged ratings are the core output.
 
 ## Rationale
 
-A CLI plus SQLite keeps the MVP inspectable and useful without committing to a dashboard, scheduler, plugin, or hosted observability system. Keeping judge/barrier tables in the schema supports the core rating workflow without requiring the plugin path.
+A CLI plus SQLite keeps the MVP inspectable and useful without committing to a dashboard, scheduler, plugin, or hosted observability system. Keeping judge/anomaly tables in the schema supports the core rating workflow without requiring the plugin path.
 
 ## Non-Goals
 

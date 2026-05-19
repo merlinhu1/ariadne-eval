@@ -30,6 +30,7 @@ Code surface:
 - src/agent_health/normalize.py
 - src/agent_health/reactions.py
 - src/agent_health/signals.py
+- src/agent_health/incidents.py
 - src/agent_health/bumps.py
 - src/agent_health/judge.py
 - src/agent_health/prompts/**
@@ -40,7 +41,7 @@ Code surface:
 
 Update truth when:
 - eval-unit normalization changes
-- reaction classification, deterministic signal, or bump-extraction behavior changes
+- reaction classification, deterministic signal, or incident-extraction behavior changes
 - judge prompt or health-status schema changes
 
 ## Local Runtime

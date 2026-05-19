@@ -1,10 +1,10 @@
 import unittest
 
-from agent_health.bumps import extract_bump_events
+from agent_health.incidents import extract_incident_events, summarize_incident_events
 
 
-class BumpExtractionTest(unittest.TestCase):
-    def test_each_tool_error_becomes_one_bump_event(self):
+class IncidentExtractionTest(unittest.TestCase):
+    def test_each_tool_error_becomes_one_incident_event(self):
         unit = {
             "id": "hermes:s1:turn:1",
             "source_session_id": "s1",
@@ -20,15 +20,16 @@ class BumpExtractionTest(unittest.TestCase):
             ],
         }
 
-        bumps = extract_bump_events(unit)
+        incidents = extract_incident_events(unit)
 
-        tool_errors = [b for b in bumps if b["bump_type"] == "tool_error"]
+        tool_errors = [i for i in incidents if i["incident_type"] == "tool_error"]
         self.assertEqual(len(tool_errors), 2)
         self.assertEqual(tool_errors[0]["related_event_id"], "e1")
         self.assertEqual(tool_errors[1]["related_event_id"], "e2")
         self.assertIn("terminal", tool_errors[0]["evidence"])
+        self.assertEqual(tool_errors[0]["bump_type"], "tool_error")
 
-    def test_bumps_include_loops_excess_and_incomplete_turns(self):
+    def test_incidents_include_loops_excess_and_incomplete_turns(self):
         unit = {
             "id": "hermes:s1:turn:2",
             "source_session_id": "s1",
@@ -44,8 +45,8 @@ class BumpExtractionTest(unittest.TestCase):
             ],
         }
 
-        bumps = extract_bump_events(unit)
-        types = [b["bump_type"] for b in bumps]
+        incidents = extract_incident_events(unit)
+        types = [i["incident_type"] for i in incidents]
 
         self.assertIn("repeated_tool_loop", types)
         self.assertIn("excessive_tool_calls", types)
@@ -67,9 +68,19 @@ class BumpExtractionTest(unittest.TestCase):
             ],
         }
 
-        bumps = extract_bump_events(unit)
+        incidents = extract_incident_events(unit)
 
-        self.assertEqual([b for b in bumps if b["bump_type"] == "tool_error"], [])
+        self.assertEqual([i for i in incidents if i["incident_type"] == "tool_error"], [])
+
+    def test_incident_summary_uses_incident_language(self):
+        summary = summarize_incident_events([
+            {"incident_type": "tool_error", "severity": "high"},
+            {"incident_type": "tool_error", "severity": "medium"},
+        ])
+
+        self.assertEqual(summary["total_incidents"], 2)
+        self.assertEqual(summary["by_type"], {"tool_error": 2})
+        self.assertEqual(summary["total_bumps"], 2)
 
 
 if __name__ == "__main__":

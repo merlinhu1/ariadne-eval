@@ -6,7 +6,7 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any
 
-from agent_health.normalize import normalize_session
+from agent_health.normalize import normalize_incident_examples, normalize_session
 
 HIDDEN_MESSAGE_FIELDS = {
     "reasoning",
@@ -73,7 +73,7 @@ class HermesStateReader:
             row = con.execute("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1").fetchone()
             return None if row is None else int(row[0])
 
-    def list_sessions(self, limit: int = 20, since: float | None = None) -> list[dict[str, Any]]:
+    def list_sessions(self, limit: int = 20, since: float | None = None, *, oldest_first: bool = False) -> list[dict[str, Any]]:
         with closing(self.connect()) as con:
             fields = self._select_fields(con, "sessions", SESSION_FIELDS)
             sql = f"SELECT {', '.join(fields)} FROM sessions"
@@ -81,7 +81,8 @@ class HermesStateReader:
             if since is not None and "started_at" in fields:
                 sql += " WHERE started_at >= ?"
                 params.append(since)
-            sql += " ORDER BY started_at DESC, id DESC LIMIT ?"
+            direction = "ASC" if oldest_first else "DESC"
+            sql += f" ORDER BY started_at {direction}, id {direction} LIMIT ?"
             params.append(limit)
             return [_row_to_dict(row) for row in con.execute(sql, params).fetchall()]  # type: ignore[list-item]
 
@@ -125,8 +126,8 @@ class HermesAdapter:
     def __init__(self, hermes_home: str | Path | None = None):
         self.reader = HermesStateReader(hermes_home)
 
-    def discover_due_sources(self, since: float | None = None, limit: int = 1000):
-        for session in self.reader.list_sessions(limit=limit, since=since):
+    def discover_due_sources(self, since: float | None = None, limit: int = 1000, *, oldest_first: bool = False):
+        for session in self.reader.list_sessions(limit=limit, since=since, oldest_first=oldest_first):
             yield session["id"]
 
     def load_source(self, source_id: str) -> dict[str, Any]:
@@ -134,3 +135,6 @@ class HermesAdapter:
 
     def normalize_eval_units(self, raw_source: dict[str, Any]) -> list[dict[str, Any]]:
         return normalize_session(raw_source["session"], raw_source["messages"])
+
+    def normalize_incident_examples(self, raw_source: dict[str, Any]) -> list[dict[str, Any]]:
+        return normalize_incident_examples(raw_source["session"], raw_source["messages"])

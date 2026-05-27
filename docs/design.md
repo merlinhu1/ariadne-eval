@@ -6,7 +6,7 @@ Original draft: `research/agent_instruction_health_evaluator_design1.md`
 
 ## Decision
 
-V1 should be as simple as possible, but the **LLM judge stays in V1**. The judge is essential because deterministic signals can surface evidence, but they do not reliably assign `succeed`, `failed`, `mishandled`, `prolonged`, or `not_evaluable` on their own.
+V1 should be as simple as possible, but the **LLM judge stays in V1**. The judge is essential because deterministic signals can surface evidence, but they do not reliably assign `succeed`, `failed`, `mishandled`, or `prolonged` on their own.
 
 The simplification is: **read Hermes `state.db` directly and drop the passive hook plugin for now**.
 
@@ -19,7 +19,8 @@ Hermes state.db
   -> schema-tolerant Hermes reader
   -> one eval unit per user message
   -> state.db-derived tool-message evidence
-  -> deterministic signals
+  -> deterministic signals and specific incident categories
+  -> optional tiny non-LLM classifier evidence when configured
   -> compact judge input
   -> LLM judge through existing Hermes provider/model config
   -> structured status + anomalies
@@ -29,16 +30,18 @@ Hermes state.db
 
 ## Judge Trigger
 
-The LLM judge is triggered by a manual CLI batch, not by a built-in scheduler.
+The LLM judge is triggered by a manual CLI batch or by explicitly configured recurring eval tasks.
 
 The V1 control flow should be:
 
 ```bash
 agent-health import hermes --since 24h
 agent-health eval --due --limit 50
+agent-health schedule set default --enabled --every 3600 --no-gap
+agent-health scheduler run --poll-seconds 60
 ```
 
-`eval --due` loads imported eval units that need judging, builds compact judge inputs, calls the judge through Hermes provider/model resolution, then stores `llm_evals` and anomaly rows. A future scheduler can wrap this command with cron/systemd, but scheduling is not itself a product component for V1.
+`eval --due` loads imported eval units that need judging, builds compact judge inputs, calls the judge through Hermes provider/model resolution, then stores `llm_evals` and anomaly rows. Recurring tasks store schedule, import, candidate, budget, cooldown, and threshold settings in `evals.db`; each scheduler run leases one task, snapshots the effective config into `eval_runs`, imports Hermes state, judges due request units, shares the same budget with incident labels, and records the next due time.
 
 ## V1 Components
 
@@ -58,19 +61,20 @@ agent-health eval --due --limit 50
    - API call count.
    - Turn duration from message timestamps.
    - Tool error count from tool result text.
+   - Specific incident categories from high-precision rules and an optional tiny non-LLM classifier.
    - Repeated tool/action evidence where available.
    - Next-user reaction classification.
    - Assistant completion-claim heuristic.
 
 4. LLM judge
    - Uses the existing Hermes provider/model path by default.
-   - Consumes the normalized eval unit, compact trace evidence, deterministic signals, and next-user reaction.
+   - Consumes the normalized eval unit, compact trace evidence, deterministic signals, optional classifier-derived incident evidence, and next-user reaction.
    - Returns strict JSON with one health status, confidence, primary reason, and anomalies.
    - Stores provider/model metadata so judge behavior is auditable.
 
 5. Sidecar SQLite
    - `$HERMES_HOME/instruction-health/evals.db`.
-   - Tables needed in V1: `eval_units`, `trace_events`, `deterministic_signals`, `llm_evals`, `anomalies`, `eval_state`.
+   - Tables needed in V1: `eval_units`, `trace_events`, `deterministic_signals`, `llm_evals`, `anomalies`, `incident_eval_examples`, `incident_labels`, `incident_predictions`, `incident_models`, `eval_tasks`, `eval_runs`, `eval_task_cursors`, `eval_state`.
 
 6. CLI
    - `init`.
@@ -79,14 +83,15 @@ agent-health eval --due --limit 50
    - `units`.
    - `signals`.
    - `eval --due`.
+   - `scheduler tick`, `scheduler run`, and `schedule` task-management subcommands.
    - `list`, `show`, and `summary` over judged results.
    - `dashboard install` to install the opt-in Hermes tab.
 
 7. Hermes dashboard tab
    - Installs into `$HERMES_HOME/plugins/ariadne-eval/dashboard`.
    - Exposes read-only `/summary` and `/units/{eval_unit_id}` plugin API routes.
-   - Visualizes statuses, incidents, anomalies, token totals, timeline buckets, and hot sessions from `evals.db`.
-   - Does not import sessions or call the judge.
+   - Visualizes request friction, requests needing attention, statuses, incidents, anomalies, token totals, anomaly timeline buckets, and secondary session groups from `evals.db`.
+   - Does not import sessions or call the judge on page load; explicit task controls may pause, resume, or mark a task due now.
 
 ## Explicitly Deferred
 
@@ -94,7 +99,7 @@ agent-health eval --due --limit 50
 - `events.jsonl` runtime event cache.
 - Exact tool start/end duration from hooks.
 - Approval/interruption runtime events.
-- Built-in scheduler or daemon. A future cron/systemd entry may call `agent-health eval --due`, but the manual CLI command is the V1 trigger.
+- Tiny classifier as a replacement for the LLM judge's final status assignment.
 - Standalone web/TUI dashboard outside Hermes.
 - Non-Hermes adapters.
 - Automatic prompt/memory/skill changes.

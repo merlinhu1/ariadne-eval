@@ -24,7 +24,7 @@ This doc owns Hermes state.db reading, schema-tolerant field selection, message 
 - Session reads select only known fields that exist in the current database schema.
 - Message reads select only user-visible/message metadata fields and exclude hidden reasoning fields.
 - Messages are ordered by timestamp and id.
-- `HermesAdapter` exposes source discovery, source loading, and eval-unit normalization for Hermes sessions.
+- `HermesAdapter` exposes source discovery, source loading, request eval-unit normalization, and incident example normalization for Hermes sessions.
 
 ## Core Rules
 
@@ -35,12 +35,13 @@ This doc owns Hermes state.db reading, schema-tolerant field selection, message 
 ## Flows And States
 
 - Reader flow: resolve Hermes home, open `state.db`, select schema-tolerant columns, return dictionaries.
-- Import flow: discover recent session ids, load session/messages, pass them to the normalizer.
+- Import flow: discover recent session ids, load session/messages, pass them to the request normalizer and the incident example normalizer.
 
 ## Contracts
 
 - `HermesAdapter.framework_name` is `hermes`.
 - Hidden fields excluded from message output include `reasoning`, `reasoning_content`, `reasoning_details`, `codex_reasoning_items`, and `codex_message_items`.
+- Incident example normalization uses the same hidden-field-excluded message dictionaries and joins assistant `tool_calls` to immediate tool-role results by `tool_call_id`.
 
 ## Product Decisions
 
@@ -59,5 +60,5 @@ Hermes already stores rich durable session data. Reading `state.db` directly kee
 
 ## Maintenance Notes
 
-- Update this doc when Hermes DB column selection, hidden-field exclusion, or source-discovery behavior changes.
-- Related tests currently include `tests/test_hermes_reader.py`.
+- Update this doc when Hermes DB column selection, hidden-field exclusion, source-discovery behavior, or adapter normalization surfaces change.
+- Related tests currently include `tests/test_hermes_reader.py` and `tests/test_normalize.py`.

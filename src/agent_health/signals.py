@@ -72,7 +72,10 @@ def _signal(name: str, value: Any, severity: str | None = None, evidence: str | 
     }
 
 
-def extract_deterministic_signals(unit: dict[str, Any], thresholds: dict[str, int | float] | None = None) -> list[dict[str, str | None]]:
+def extract_deterministic_signals(
+    unit: dict[str, Any],
+    thresholds: dict[str, int | float] | None = None,
+) -> list[dict[str, str | None]]:
     th = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
     events = unit.get("trace_events") or []
     signals: list[dict[str, str | None]] = []
@@ -101,7 +104,7 @@ def extract_deterministic_signals(unit: dict[str, Any], thresholds: dict[str, in
     ))
 
     reaction = classify_reaction(unit.get("next_user_reaction_text"), unit.get("user_request"))
-    signals.append(_signal("next_user_reaction_type", reaction, "medium" if reaction in {"correction", "complaint", "repeated_request"} else None, unit.get("next_user_reaction_text")))
+    signals.append(_signal("reaction", reaction, "medium" if reaction in {"correction", "complaint", "repeated_request"} else None, unit.get("next_user_reaction_text")))
 
     assistant_response = str(unit.get("assistant_response") or "").lower()
     claimed = any(p in assistant_response for p in ["created", "done", "completed", "sent", "uploaded", "fixed", "i have"])

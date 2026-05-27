@@ -4,11 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ariadne-eval"
-version = "0.2.0"
+version = "0.4.0"
 description = "Local instruction-health evaluator for Hermes Agent sessions"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
+
+[project.optional-dependencies]
+ml = ["scikit-learn>=1.4"]
 
 [project.scripts]
 agent-health = "agent_health.cli:main"
@@ -18,3 +21,6 @@ packages = ["src/agent_health"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/agent_health/dashboard_plugin/dashboard" = "agent_health/dashboard_plugin/dashboard"
+
+[tool.pytest.ini_options]
+asyncio_default_fixture_loop_scope = "function"

@@ -8,7 +8,7 @@
     "path": "/ariadne-eval",
     "position": "after:kanban"
   },
-  "entry": "dist/index.js",
-  "css": "dist/style.css",
+  "entry": "dist/index.v20260520b.js",
+  "css": "dist/style.v20260520b.css",
   "api": "plugin_api.py"
 }

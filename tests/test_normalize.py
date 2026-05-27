@@ -1,9 +1,26 @@
 import unittest
 
-from agent_health.normalize import normalize_session
+from agent_health.normalize import detect_request_boundaries, normalize_session
 
 
 class NormalizeSessionTest(unittest.TestCase):
+    def test_detect_request_boundaries_exposes_current_one_real_user_message_unit(self):
+        messages = [
+            {"id": 1, "role": "user", "content": "First real request", "timestamp": 1.0},
+            {"id": 2, "role": "assistant", "content": "First response", "timestamp": 2.0},
+            {"id": 3, "role": "user", "content": "[CONTEXT COMPACTION — REFERENCE ONLY] old context", "timestamp": 3.0},
+            {"id": 4, "role": "assistant", "content": "ignored", "timestamp": 4.0},
+            {"id": 5, "role": "user", "content": "Second real request", "timestamp": 5.0},
+            {"id": 6, "role": "assistant", "content": "Second response", "timestamp": 6.0},
+        ]
+
+        boundaries = detect_request_boundaries(messages)
+
+        self.assertEqual([b.turn_index for b in boundaries], [1, 2])
+        self.assertEqual([b.user_message_id for b in boundaries], ["1", "5"])
+        self.assertEqual([b.user_index for b in boundaries], [0, 2])
+        self.assertEqual([b.assistant_index for b in boundaries], [1, 3])
+
     def test_creates_one_eval_unit_per_user_request_with_reaction_and_tool_events(self):
         session = {
             "id": "s1",
@@ -112,6 +129,20 @@ class NormalizeSessionTest(unittest.TestCase):
         units = normalize_session(session, messages)
 
         self.assertFalse(units[0]["trace_events"][0]["result_error"])
+
+    def test_preserves_long_tool_error_details_for_dashboard_inspection(self):
+        session = {"id": "s6", "source": "discord", "model": "m", "api_call_count": 0}
+        sentinel = "DETAIL_SENTINEL_AFTER_2000_CHARS"
+        long_error = "Traceback start " + ("x" * 2100) + sentinel + " final frame"
+        messages = [
+            {"id": 1, "role": "user", "content": "run failing command", "timestamp": 1.0},
+            {"id": 2, "role": "tool", "content": long_error, "tool_name": "terminal", "timestamp": 2.0},
+            {"id": 3, "role": "assistant", "content": "It failed.", "timestamp": 3.0},
+        ]
+
+        units = normalize_session(session, messages)
+
+        self.assertIn(sentinel, units[0]["trace_events"][0]["result_preview"])
 
 
 if __name__ == "__main__":

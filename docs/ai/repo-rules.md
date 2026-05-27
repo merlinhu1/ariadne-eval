@@ -1,7 +1,7 @@
 ---
 status: active
 doc_type: ai-instructions
-last_reviewed: 2026-05-19
+last_reviewed: 2026-05-24
 source_of_truth:
   - ../../.truthmark/config.yml
   - ../architecture/system-overview.md
@@ -37,9 +37,9 @@ This is the repository instruction authority for Ariadne Eval agents. `AGENTS.md
 
 - Build the Hermes-first state.db ingestion and LLM judge path before adding broader runtime integrations.
 - Keep state.db ingestion and the CLI judge path useful without requiring passive hook capture.
-- The Hermes dashboard tab is now an active, opt-in visualization surface; keep it read-only over `evals.db` and do not let it import sessions or call the judge.
+- The Hermes dashboard tab is an active, opt-in review surface over `evals.db`; explicit browser actions may write labels and may trigger retraining, but browsing or labeling must not silently start import, judging, or training work.
 - Do not add a scheduler or non-Hermes adapter to V1 unless explicitly requested.
-- Keep the LLM judge in V1; deterministic signals alone are not the final rating mechanism.
+- Keep LLM judging as a permanent part of the evaluator path; deterministic signals and local ML models will not provide 100% high-confidence coverage for semantic health decisions.
 - Do not store or depend on hidden chain-of-thought or provider reasoning fields.
 - Prefer deterministic evidence before LLM judgment.
 

@@ -4,6 +4,8 @@ __pycache__/
 .venv/
 build/
 dist/
+!src/agent_health/dashboard_plugin/dashboard/dist/
+!src/agent_health/dashboard_plugin/dashboard/dist/**
 .coverage
 .pytest_cache/
 .mypy_cache/

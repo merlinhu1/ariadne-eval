@@ -7,6 +7,8 @@ source_of_truth:
   - ../../truthmark/areas/dashboard-visualization.md
   - ../../../src/agent_health/dashboard_queries.py
   - ../../../src/agent_health/dashboard_plugin/
+  - ../../../src/agent_health/cli.py
+  - ../../../src/agent_health/scheduler_bootstrap.py
 ---
 
 # Hermes Dashboard Plugin
@@ -32,7 +34,7 @@ This doc owns dashboard query payload behavior, the bundled Hermes dashboard plu
 - The plugin API exposes inspection routes, currently `GET /summary`, `GET /sessions/{source_session_id}`, and `GET /units/{eval_unit_id}`, plus explicit write/control routes for generic feedback, incident labels, and eval task management under Hermes' `/api/plugins/ariadne-eval/` mount. Summary requests accept `session_limit` (`1..100`, default `24`) and `session_offset` (`>=0`, default `0`) query parameters for session-card pagination.
 - The browser tab visualizes the summary with a top request-friction section, a visible friction-anchor legend, a request-first "Requests needing attention" list sorted by `request_friction_score`, status bars, aggregated incident-label chips, top anomaly chips, judge-token totals, an anomaly-only timeline, and secondary paginated session-grouped anomaly/incident cards.
 - The browser tab exposes a header `Configure` button that opens a wide in-dashboard configuration panel, not a hidden route. Opening or refreshing the panel lists scheduler task configuration, available trained incident ML models, the promoted model, and read-only Hermes LLM judging route guidance without importing sessions, judging units, training models, or creating eval runs.
-- The configuration panel can create or update recurring eval tasks with name, enabled state, interval or continuous scheduling, interval minutes, no-gap behavior, idle backoff, candidate limit, priority score floor, cooldown, judgement threshold, judge call limits, total judge token budget, and per-call token cap. Existing tasks can be selected into the form, saved with explicit `POST`/`PATCH`, or controlled with explicit Run now, Pause, and Resume buttons.
+- The configuration panel can create or update recurring eval tasks with name, enabled state, interval or continuous scheduling, interval hours, no-gap behavior, idle backoff, candidate limit, priority score floor, cooldown, judgement threshold, judge call limits, total judge token budget, and per-call token cap. Existing tasks can be selected into the form, saved with explicit `POST`/`PATCH`, or controlled with explicit Run now, Pause, and Resume buttons.
 - The configuration panel lists trained incident ML model records, lets the user promote one explicitly, and exposes an explicit Retrain button that trains from accepted incident labels, smoke-checks the artifact, records model metadata, and refreshes the panel. The panel shows Hermes route priority for LLM judging but does not claim to edit arbitrary provider/auth settings that remain owned by Hermes.
 - The Agent sessions panel renders one API-provided session page at a time, shows the total from `session_pagination.total`, and provides Prev/Next controls using the same `24`-session page size as the API default. Changing the time window resets session pagination to the first page.
 - Session cards expose an explicit Details action that lazily opens a right-side drawer rather than rendering any inline lower inspector panel. The drawer uses the session detail API, aborts stale in-flight fetches when the selected session changes, and can close with `Esc`.
@@ -62,7 +64,7 @@ This doc owns dashboard query payload behavior, the bundled Hermes dashboard plu
 - Dashboard configuration browsing must remain read-only. Only Save/Create, Promote, Retrain, Run now, Pause, and Resume controls may write sidecar state.
 - Dashboard API routes should be thin wrappers around `dashboard_queries.py`; session detail queries should remain session-scoped before applying per-session limits.
 - The plugin is opt-in; state.db ingestion and CLI evaluation must continue working without dashboard installation.
-- Dashboard assets are copied into `<hermes-home>/plugins/ariadne-eval/dashboard` by the CLI install command.
+- Dashboard assets are copied into `<hermes-home>/plugins/ariadne-eval/dashboard` by the CLI install command. By default the same install also writes `<hermes-home>/scripts/ariadne_eval_scheduler_watchdog.py` and creates or updates a local-output Hermes cron job named `Ariadne Eval scheduler watchdog` on `every 10m`; the watchdog starts `agent-health --hermes-home <hermes-home> scheduler run --poll-seconds 600` when no scheduler daemon PID is alive. Dashboard task interval editing is hour-based and converts to stored `interval_seconds` on save. `dashboard install --no-scheduler-watchdog` skips this scheduler watchdog wiring for users who supervise `agent-health scheduler run` themselves.
 
 ## Contracts
 

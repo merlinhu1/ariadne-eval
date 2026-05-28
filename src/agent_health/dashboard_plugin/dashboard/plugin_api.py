@@ -54,6 +54,8 @@ def _dashboard_config_payload(db: EvalDB) -> dict[str, Any]:
         "promoted_incident_model": promoted,
         "eval_task_options": {
             "schedule_kinds": ["interval", "continuous"],
+            "interval_unit": "hours",
+            "default_interval_hours": 5,
             "judgement_thresholds": ["strict", "balanced", "relaxed"],
         },
         "llm_judging": {

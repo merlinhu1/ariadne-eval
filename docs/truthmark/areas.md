@@ -72,11 +72,13 @@ Code surface:
 - src/agent_health/config.py
 - src/agent_health/db.py
 - src/agent_health/scheduler.py
+- src/agent_health/scheduler_bootstrap.py
 - src/agent_health/__init__.py
 - examples/**
 - tests/test_db_and_signals.py
 - tests/test_cli.py
 - tests/test_scheduler.py
+- tests/test_scheduler_bootstrap.py
 
 Update truth when:
 - CLI commands, local paths, judge config, or sidecar database schema change

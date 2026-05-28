@@ -21,6 +21,7 @@ from agent_health.dashboard_plugin import install_dashboard_plugin
 from agent_health.db import EvalDB, default_eval_db_path
 from agent_health.judge import HermesLLMJudgeClient, INCIDENT_PROMPT_VERSION, PROMPT_VERSION, TokenUsage
 from agent_health.scheduler import run_due_eval_once, run_eval_task
+from agent_health.scheduler_bootstrap import DEFAULT_SCHEDULER_POLL_SECONDS, DEFAULT_WATCHDOG_SCHEDULE, install_scheduler_watchdog
 from agent_health.signals import extract_deterministic_signals
 
 
@@ -652,6 +653,28 @@ def cmd_dashboard_install(args) -> int:
     home = Path(args.hermes_home).expanduser()
     destination = install_dashboard_plugin(home)
     print(f"Installed Ariadne Eval dashboard plugin to {destination}")
+    if not args.no_scheduler_watchdog:
+        watchdog = install_scheduler_watchdog(
+            home,
+            schedule=args.watchdog_schedule,
+            poll_seconds=args.scheduler_poll_seconds,
+        )
+        print(f"Installed Ariadne Eval scheduler watchdog script to {watchdog.script_path}")
+        if watchdog.job_registered:
+            action = "Created" if watchdog.job_created else "Updated"
+            print(f"{action} Hermes cron watchdog job {watchdog.job_id} ({args.watchdog_schedule}).")
+        else:
+            print(
+                "Warning: could not register Hermes cron watchdog job automatically: "
+                f"{watchdog.error}. Run `agent-health --hermes-home "
+                f"{home} scheduler run --poll-seconds {args.scheduler_poll_seconds}` "
+                "from your process supervisor if scheduled evals should execute."
+            )
+    else:
+        print(
+            "Skipped scheduler watchdog install. Scheduled evals require a running "
+            "`agent-health scheduler run` process."
+        )
     print("Open Hermes dashboard and use the Ariadne Eval tab after restarting/reloading the dashboard server.")
     return 0
 
@@ -879,6 +902,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_dashboard = sub.add_parser("dashboard", help="Install or manage the Hermes dashboard tab")
     dashboard_sub = p_dashboard.add_subparsers(dest="dashboard_command", required=True)
     p_dashboard_install = dashboard_sub.add_parser("install", help="Install the Ariadne Eval tab into $HERMES_HOME/plugins")
+    p_dashboard_install.add_argument(
+        "--no-scheduler-watchdog",
+        action="store_true",
+        help="Only install the dashboard tab; do not install the Hermes cron watchdog that keeps scheduled evals running",
+    )
+    p_dashboard_install.add_argument("--watchdog-schedule", default=DEFAULT_WATCHDOG_SCHEDULE)
+    p_dashboard_install.add_argument("--scheduler-poll-seconds", type=float, default=DEFAULT_SCHEDULER_POLL_SECONDS)
     p_dashboard_install.set_defaults(func=cmd_dashboard_install)
 
     p_scheduler = sub.add_parser("scheduler", help="Run recurring evaluation task scheduler")
@@ -886,7 +916,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_scheduler_tick = scheduler_sub.add_parser("tick", help="Run one scheduler tick for due tasks")
     p_scheduler_tick.set_defaults(func=cmd_scheduler_tick)
     p_scheduler_run = scheduler_sub.add_parser("run", help="Poll for due recurring eval tasks")
-    p_scheduler_run.add_argument("--poll-seconds", type=float, default=60.0)
+    p_scheduler_run.add_argument("--poll-seconds", type=float, default=DEFAULT_SCHEDULER_POLL_SECONDS)
     p_scheduler_run.set_defaults(func=cmd_scheduler_run)
 
     p_schedule = sub.add_parser("schedule", help="Manage recurring evaluation tasks")

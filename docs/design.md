@@ -38,7 +38,7 @@ The V1 control flow should be:
 agent-health import hermes --since 24h
 agent-health eval --due --limit 50
 agent-health schedule set default --enabled --every 3600 --no-gap
-agent-health scheduler run --poll-seconds 60
+agent-health scheduler run --poll-seconds 600
 ```
 
 `eval --due` loads imported eval units that need judging, builds compact judge inputs, calls the judge through Hermes provider/model resolution, then stores `llm_evals` and anomaly rows. Recurring tasks store schedule, import, candidate, budget, cooldown, and threshold settings in `evals.db`; each scheduler run leases one task, snapshots the effective config into `eval_runs`, imports Hermes state, judges due request units, shares the same budget with incident labels, and records the next due time.

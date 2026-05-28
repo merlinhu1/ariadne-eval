@@ -9,6 +9,7 @@ source_of_truth:
   - ../../../src/agent_health/config.py
   - ../../../src/agent_health/db.py
   - ../../../src/agent_health/scheduler.py
+  - ../../../src/agent_health/scheduler_bootstrap.py
   - ../../../src/agent_health/judge.py
   - ../../../src/agent_health/incident_model.py
   - ../../../src/agent_health/incident_routing.py
@@ -45,7 +46,7 @@ This doc owns CLI commands, Hermes-home initialization, judge config defaults, s
 - `list`, `show`, and `summary` query latest judged results from the sidecar database; `list --details` prints request, next-user reaction, observed outcome, and anomaly evidence context for each row.
 - The sidecar database exposes recent-unit listing plus a session-scoped unit lookup that filters by `source_session_id` and `since` before applying its limit, allowing dashboard session-detail views to inspect an older session without being crowded out by newer units from other sessions.
 - The V1 sidecar SQLite schema includes eval units, trace events, deterministic signals, LLM evals, anomalies, incident eval examples, incident labels, incident predictions, incident model registry rows, eval state tables, eval task rows, and eval run rows. The canonical incident source of truth is `incident_eval_examples` plus `incident_labels` and `incident_predictions`.
-- `dashboard install` copies the bundled dashboard plugin into `<hermes-home>/plugins/ariadne-eval/dashboard`.
+- `dashboard install` copies the bundled dashboard plugin into `<hermes-home>/plugins/ariadne-eval/dashboard`. By default it also installs `<hermes-home>/scripts/ariadne_eval_scheduler_watchdog.py` and creates or updates a local-output Hermes cron job named `Ariadne Eval scheduler watchdog` on `every 10m`; the watchdog starts a scheduler daemon with `--poll-seconds 600` so dashboard-created eval tasks have a supervised, low-frequency scheduler consumer when Hermes cron is active. `--no-scheduler-watchdog` preserves tab-only installation for users who supervise `agent-health scheduler run` themselves.
 - `schedule list`, `schedule show`, and `schedule runs` inspect eval task and run state without importing sessions, calling the judge, or creating eval runs. `schedule set` changes task configuration. `schedule pause` disables an existing task, `schedule resume` enables an existing task and marks it due at the current wall-clock time, and `schedule run-now` explicitly enables an existing task and marks it due at the current wall-clock time.
 - Eval task updates by displayed task id or by task name mutate the original task row. Task creation and updates reject unsupported schedule kinds, including `cron`, and accept only `interval` and `continuous` schedules until cron parsing is implemented. Numeric scheduler limits and intervals are validated before storage so negative intervals, negative budgets, zero candidate limits, and invalid boolean controls do not enter eval task configuration.
 - `scheduler tick` claims due enabled eval tasks and runs one scheduler pass. `scheduler run` polls for due work at `--poll-seconds` intervals and prints run summaries when work is performed.

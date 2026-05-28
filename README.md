@@ -188,14 +188,15 @@ agent-health --hermes-home ~/.hermes dashboard install
 
 Reload or restart Hermes, then open the Ariadne Eval tab. It shows request friction, statuses, anomalies, sessions, incident examples, predictions, and label controls from the local `evals.db`.
 
-The dashboard is intentionally constrained: it is a review surface over existing local data, not an importer, scheduler, or judge runner.
+By default, installation also registers a quiet Hermes cron watchdog that starts `agent-health scheduler run` when scheduled eval tasks need a consumer. Use `--no-scheduler-watchdog` only if you already supervise the scheduler with systemd, launchd, Docker, or another process manager.
+
+The dashboard is intentionally constrained: it is a review/configuration surface over local data. Page loads do not import sessions, call the judge, or create eval runs; explicit scheduler controls mark tasks due for the scheduler worker.
 
 ## Boundaries
 
 Ariadne Eval V1 is not:
 
 - a hosted observability product;
-- a resident scheduler or background daemon;
 - a passive hook capture system;
 - a standalone web dashboard;
 - a safety or policy evaluator;

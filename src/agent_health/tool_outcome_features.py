@@ -4,7 +4,7 @@ import json
 import re
 from typing import Any
 
-FEATURE_SCHEMA_VERSION = "incident_features_v1"
+FEATURE_SCHEMA_VERSION = "tool_outcome_features_v1"
 
 
 def _text(value: Any, limit: int = 4000) -> str:
@@ -55,7 +55,7 @@ def _error_fields(value: Any) -> dict[str, Any]:
     }
 
 
-def build_incident_features(example: dict[str, Any]) -> dict[str, Any]:
+def build_tool_outcome_features(example: dict[str, Any]) -> dict[str, Any]:
     tool_name = _text(example.get("tool_name"), 200)
     tool_arguments = _text(example.get("tool_arguments"), 4000)
     tool_result = _text(example.get("tool_result"), 6000)
@@ -64,7 +64,7 @@ def build_incident_features(example: dict[str, Any]) -> dict[str, Any]:
     errors = _error_fields(tool_result)
     return {
         "schema_version": FEATURE_SCHEMA_VERSION,
-        "example_id": example.get("id"),
+        "tool_outcome_case_id": example.get("id"),
         "tool_name": tool_name,
         "tool_arguments_text": tool_arguments,
         "tool_result_text": tool_result,
@@ -76,7 +76,7 @@ def build_incident_features(example: dict[str, Any]) -> dict[str, Any]:
         "error": errors["error"],
         "stderr": errors["stderr"],
         "exception": errors["exception"],
-        "user_request_excerpt": _text(example.get("user_request_excerpt"), 2000),
+        "request_text_excerpt": _text(example.get("request_text_excerpt"), 2000),
         "prior_assistant_visible_text": _text(example.get("prior_assistant_visible_text"), 2000),
         "following_assistant_visible_text": _text(example.get("following_assistant_visible_text"), 2000),
         "explicit_caller_expectation": example.get("explicit_caller_expectation"),
@@ -85,14 +85,14 @@ def build_incident_features(example: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def incident_feature_text(features: dict[str, Any]) -> str:
+def tool_outcome_feature_text(features: dict[str, Any]) -> str:
     return "\n".join(
         str(features.get(key) or "")
         for key in (
             "tool_name",
             "tool_arguments_text",
             "tool_result_text",
-            "user_request_excerpt",
+            "request_text_excerpt",
             "prior_assistant_visible_text",
             "following_assistant_visible_text",
         )

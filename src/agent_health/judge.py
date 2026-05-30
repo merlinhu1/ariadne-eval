@@ -9,15 +9,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-PROMPT_VERSION = "instruction_health_v1"
-EVAL_SCHEMA_VERSION = "instruction_health_eval_v1"
-INCIDENT_PROMPT_VERSION = "incident_judge_v1"
-INCIDENT_EVAL_SCHEMA_VERSION = "incident_eval_v1"
+PROMPT_VERSION = "turn_case_review_v1"
+EVAL_SCHEMA_VERSION = "turn_case_review_v1"
+TOOL_OUTCOME_PROMPT_VERSION = "tool_outcome_review_v1"
+TOOL_OUTCOME_REVIEW_SCHEMA_VERSION = "tool_outcome_review_v1"
 
 HEALTH_STATUSES = {"succeed", "failed", "mishandled", "prolonged"}
 CONFIDENCES = {"high", "medium", "low"}
 REACTION_TYPES = {"acceptance", "continuation", "clarification", "correction", "complaint", "repeated_request", "scope_change", "unrelated", "unknown", "none"}
-ANOMALY_TYPES = {
+FINDING_TYPES = {
     "tool_error", "tool_timeout", "permission_denied", "approval_denied",
     "operation_cancelled", "rate_limited", "network_failure", "resource_exhausted",
     "dependency_missing", "path_not_found", "test_failure", "quality_gate_failure",
@@ -28,8 +28,8 @@ ANOMALY_TYPES = {
     "user_correction", "user_repeated_request", "interrupted_or_incomplete",
     "excessive_duration", "excessive_api_calls", "excessive_tool_calls", "context_loss",
 }
-INCIDENT_LABELS = {"incident", "not_incident", "unsure"}
-INCIDENT_REASON_CODES = {"execution_error", "no_result", "bad_request", "bad_output", "other"}
+TOOL_OUTCOME_LABELS = {"problem", "ok", "unsure"}
+TOOL_OUTCOME_REASON_CODES = {"execution_error", "empty_output", "invalid_tool_input", "wrong_or_bad_output", "other"}
 
 
 
@@ -206,16 +206,16 @@ def validate_eval_json(data: dict[str, Any]) -> dict[str, Any]:
     present_deleted = sorted(field for field in deleted_fields if field in normalized)
     if present_deleted:
         raise ValueError(f"deleted request eval fields are not accepted: {', '.join(present_deleted)}")
-    status = normalized.get("health_status")
+    status = normalized.get("outcome_status")
     if status not in HEALTH_STATUSES:
-        raise ValueError(f"invalid health_status {status!r}")
+        raise ValueError(f"invalid outcome_status {status!r}")
     confidence = normalized.get("confidence")
     if confidence not in CONFIDENCES:
         raise ValueError(f"invalid confidence {confidence!r}")
-    primary_reason = _non_empty(normalized.get("primary_reason"))
-    if not primary_reason:
-        raise ValueError("primary_reason is required")
-    normalized["primary_reason"] = primary_reason
+    summary_reason = _non_empty(normalized.get("summary_reason"))
+    if not summary_reason:
+        raise ValueError("summary_reason is required")
+    normalized["summary_reason"] = summary_reason
     normalized.setdefault("goal_summary", "")
     normalized.setdefault("observed_outcome", "")
     reaction = normalized.get("user_reaction")
@@ -227,49 +227,50 @@ def validate_eval_json(data: dict[str, Any]) -> dict[str, Any]:
         "used_as_evidence": bool(reaction.get("used_as_evidence", False)),
         "evidence": str(reaction.get("evidence") or ""),
     }
-    if "request_friction_score" not in normalized:
-        raise ValueError("request_friction_score is required")
+    if "friction_score" not in normalized:
+        raise ValueError("friction_score is required")
     try:
-        friction = float(normalized["request_friction_score"])
+        friction = float(normalized["friction_score"])
     except (TypeError, ValueError) as exc:
-        raise ValueError("request_friction_score must be between 0 and 1") from exc
+        raise ValueError("friction_score must be between 0 and 1") from exc
     if friction < 0.0 or friction > 1.0:
-        raise ValueError("request_friction_score must be between 0 and 1")
-    normalized["request_friction_score"] = friction
-    anomalies = normalized.get("anomalies")
-    if not isinstance(anomalies, list):
-        anomalies = []
-    cleaned_anomalies = []
-    for anomaly in anomalies:
-        if not isinstance(anomaly, dict):
+        raise ValueError("friction_score must be between 0 and 1")
+    normalized["friction_score"] = friction
+    findings = normalized.get("findings")
+    if not isinstance(findings, list):
+        findings = []
+    cleaned_findings = []
+    for finding in findings:
+        if not isinstance(finding, dict):
             continue
-        anomaly_type = str(anomaly.get("type") or "").strip()
-        if anomaly_type not in ANOMALY_TYPES:
+        finding_type = str(finding.get("finding_type") or "").strip()
+        if finding_type not in FINDING_TYPES:
             continue
-        severity = str(anomaly.get("severity") or "medium").strip().lower()
+        severity = str(finding.get("severity") or "medium").strip().lower()
         if severity not in {"low", "medium", "high"}:
             severity = "medium"
-        cleaned_anomalies.append({
-            "type": anomaly_type,
+        cleaned_findings.append({
+            "finding_type": finding_type,
             "severity": severity,
-            "source": str(anomaly.get("source") or "trace"),
-            "evidence": str(anomaly.get("evidence") or ""),
+            "evidence_source": str(finding.get("evidence_source") or "trace"),
+            "evidence_text": str(finding.get("evidence_text") or ""),
+            "case_event_id": str(finding.get("case_event_id") or "") or None,
         })
-    normalized["anomalies"] = cleaned_anomalies
+    normalized["findings"] = cleaned_findings
     normalized.pop("barriers", None)
     normalized.setdefault("prolongation_evidence", {"tool_calls": 0, "api_calls": 0, "duration_seconds": None, "repeated_actions": []})
     normalized.setdefault("missed_or_mishandled_requirements", [])
     return normalized
 
 
-def validate_incident_eval_json(data: dict[str, Any]) -> dict[str, Any]:
+def validate_tool_outcome_eval_json(data: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(data)
-    normalized.setdefault("schema_version", INCIDENT_EVAL_SCHEMA_VERSION)
-    if normalized["schema_version"] != INCIDENT_EVAL_SCHEMA_VERSION:
+    normalized.setdefault("schema_version", TOOL_OUTCOME_REVIEW_SCHEMA_VERSION)
+    if normalized["schema_version"] != TOOL_OUTCOME_REVIEW_SCHEMA_VERSION:
         raise ValueError(f"unsupported schema_version {normalized['schema_version']!r}")
-    label = str(normalized.get("label") or "").strip()
-    if label not in INCIDENT_LABELS:
-        raise ValueError(f"invalid incident label {label!r}")
+    label = str(normalized.get("outcome_label") or "").strip()
+    if label not in TOOL_OUTCOME_LABELS:
+        raise ValueError(f"invalid tool_outcome label {label!r}")
     reason_code = normalized.get("reason_code")
     if reason_code in ("", None):
         reason_code = None
@@ -277,53 +278,53 @@ def validate_incident_eval_json(data: dict[str, Any]) -> dict[str, Any]:
         reason_code = str(reason_code).strip()
     if reason_code == "null":
         reason_code = None
-    elif reason_code is not None and reason_code not in INCIDENT_REASON_CODES:
-        raise ValueError(f"invalid incident reason_code {reason_code!r}")
+    elif reason_code is not None and reason_code not in TOOL_OUTCOME_REASON_CODES:
+        raise ValueError(f"invalid tool_outcome reason_code {reason_code!r}")
     confidence = float(normalized.get("confidence") or 0.0)
     if confidence < 0.0 or confidence > 1.0:
-        raise ValueError("incident confidence must be between 0 and 1")
+        raise ValueError("tool_outcome confidence must be between 0 and 1")
     evidence = normalized.get("evidence_summary")
     if not str(evidence or "").strip():
         raise ValueError("evidence_summary is required")
     return {
-        "schema_version": INCIDENT_EVAL_SCHEMA_VERSION,
-        "label": label,
+        "schema_version": TOOL_OUTCOME_REVIEW_SCHEMA_VERSION,
+        "outcome_label": label,
         "reason_code": reason_code,
         "confidence": confidence,
         "evidence_summary": str(evidence),
     }
 
 
-def validate_incident_batch_eval_json(data: dict[str, Any], *, expected_ids: list[str]) -> dict[str, dict[str, Any]]:
-    """Validate a batched incident judge response and key results by example id."""
+def validate_tool_outcome_batch_eval_json(data: dict[str, Any], *, expected_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Validate a batched tool_outcome judge response and key results by example id."""
     results = data.get("results")
     if not isinstance(results, list):
-        raise ValueError("incident batch judge response requires a results list")
+        raise ValueError("tool_outcome batch judge response requires a results list")
     expected = {str(example_id) for example_id in expected_ids}
     normalized: dict[str, dict[str, Any]] = {}
     for item in results:
         if not isinstance(item, dict):
-            raise ValueError("incident batch result rows must be JSON objects")
-        example_id = str(item.get("incident_example_id") or item.get("example_id") or "").strip()
+            raise ValueError("tool_outcome batch result rows must be JSON objects")
+        example_id = str(item.get("tool_outcome_case_id") or "").strip()
         if not example_id:
-            raise ValueError("incident batch result missing incident_example_id")
+            raise ValueError("tool_outcome batch result missing tool_outcome_case_id")
         if example_id not in expected:
             continue
         payload = dict(item)
-        payload.setdefault("schema_version", INCIDENT_EVAL_SCHEMA_VERSION)
-        normalized[example_id] = validate_incident_eval_json(payload)
+        payload.setdefault("schema_version", TOOL_OUTCOME_REVIEW_SCHEMA_VERSION)
+        normalized[example_id] = validate_tool_outcome_eval_json(payload)
     return normalized
 
 
 def _signal_map(signals: list[dict[str, Any]]) -> dict[str, Any]:
-    return {str(s.get("signal_name")): s.get("signal_value") for s in signals}
+    return {str(s.get("signal_type")): s.get("signal_value") for s in signals}
 
 
 FIELD_LIMITS = {
-    "previous_context_summary": 2500,
-    "user_request": 3000,
-    "assistant_response": 4000,
-    "next_user_reaction_text": 1000,
+    "prior_context_summary": 2500,
+    "request_text": 3000,
+    "response_text": 4000,
+    "next_request_text": 1000,
     "tool_args": 900,
     "tool_result": 1500,
 }
@@ -395,27 +396,27 @@ def preflight_trim_text(value: Any, *, limit: int, label: str) -> str | None:
 
 
 def build_trace_summary(unit: dict[str, Any], signals: list[dict[str, Any]]) -> dict[str, Any]:
-    events = unit.get("trace_events") or []
+    events = unit.get("case_events") or []
     tool_sequence = []
     for idx, event in enumerate(events[:40], start=1):
         tool_sequence.append({
             "index": idx,
             "tool_name": event.get("tool_name"),
-            "args_summary": preflight_trim_text(event.get("args_preview"), limit=FIELD_LIMITS["tool_args"], label="tool args"),
-            "result_summary": preflight_trim_text(event.get("result_preview"), limit=FIELD_LIMITS["tool_result"], label="tool result"),
-            "error": bool(event.get("result_error")),
+            "input_summary": preflight_trim_text(event.get("input_preview"), limit=FIELD_LIMITS["tool_args"], label="tool input"),
+            "output_summary": preflight_trim_text(event.get("output_preview"), limit=FIELD_LIMITS["tool_result"], label="tool output"),
+            "error": bool(event.get("output_error")),
             "duration_ms": event.get("duration_ms"),
         })
     return {
         "tool_sequence": tool_sequence,
-        "deterministic_signals": signals,
+        "case_signals": signals,
         "timing": {
             "turn_duration_seconds": _signal_map(signals).get("turn_duration_seconds"),
-            "api_call_count": unit.get("api_call_count"),
-            "tool_call_count": unit.get("tool_call_count"),
+            "source_session_api_interaction_count": unit.get("source_session_api_interaction_count"),
+            "tool_interaction_count": unit.get("tool_interaction_count"),
         },
         "next_user_reaction": {
-            "text": unit.get("next_user_reaction_text"),
+            "text": unit.get("next_request_text"),
         },
     }
 
@@ -425,7 +426,7 @@ JUDGEMENT_THRESHOLDS = {
         "level": "strict",
         "policy": (
             "Require concrete evidence from the trace between the request and response before assigning failed, mishandled, or prolonged. "
-            "Do not treat natural follow-up, setup questions, new instructions, document uploads, or ambiguous continuation as anomalies by themselves. "
+            "Do not treat natural follow-up, setup questions, new instructions, document uploads, or ambiguous continuation as findings by themselves. "
             "A next-user message is supporting evidence only when it explicitly corrects/complains/repeats the same request and is consistent with trace or assistant-response evidence. "
             "Prefer succeed when the response reasonably handled the request and no concrete failure/mishandling/prolongation evidence is visible."
         ),
@@ -433,7 +434,7 @@ JUDGEMENT_THRESHOLDS = {
     "balanced": {
         "level": "balanced",
         "policy": (
-            "Use both trace evidence and user reaction. Do not mark natural follow-ups or new requests as failures, but allow explicit correction/complaint to support an anomaly "
+            "Use both trace evidence and user reaction. Do not mark natural follow-ups or new requests as failures, but allow explicit correction/complaint to support an finding "
             "when it matches the assistant response or trace."
         ),
     },
@@ -459,29 +460,29 @@ def judgement_threshold_policy(level: str | None) -> dict[str, str]:
 
 def build_eval_payload(unit: dict[str, Any], signals: list[dict[str, Any]], *, judgement_threshold: str | None = "strict") -> dict[str, Any]:
     return {
-        "eval_unit_id": unit.get("id"),
+        "turn_case_id": unit.get("id"),
         "framework": unit.get("framework"),
         "session": {
             "source_session_id": unit.get("source_session_id"),
-            "source_turn_index": unit.get("source_turn_index"),
+            "turn_index": unit.get("turn_index"),
             "source": unit.get("source"),
             "model": unit.get("model"),
             "title": unit.get("title"),
         },
-        "previous_context_summary": preflight_trim_text(
-            unit.get("previous_context_summary"),
-            limit=FIELD_LIMITS["previous_context_summary"],
+        "prior_context_summary": preflight_trim_text(
+            unit.get("prior_context_summary"),
+            limit=FIELD_LIMITS["prior_context_summary"],
             label="previous context",
         ),
-        "user_request": preflight_trim_text(unit.get("user_request"), limit=FIELD_LIMITS["user_request"], label="user request"),
-        "assistant_response": preflight_trim_text(
-            unit.get("assistant_response"),
-            limit=FIELD_LIMITS["assistant_response"],
+        "request_text": preflight_trim_text(unit.get("request_text"), limit=FIELD_LIMITS["request_text"], label="user request"),
+        "response_text": preflight_trim_text(
+            unit.get("response_text"),
+            limit=FIELD_LIMITS["response_text"],
             label="assistant response",
         ),
-        "next_user_reaction_text": preflight_trim_text(
-            unit.get("next_user_reaction_text"),
-            limit=FIELD_LIMITS["next_user_reaction_text"],
+        "next_request_text": preflight_trim_text(
+            unit.get("next_request_text"),
+            limit=FIELD_LIMITS["next_request_text"],
             label="next user reaction",
         ),
         "preflight_trim_policy": {
@@ -495,14 +496,14 @@ def build_eval_payload(unit: dict[str, Any], signals: list[dict[str, Any]], *, j
     }
 
 
-def build_incident_judge_payload(example: dict[str, Any], prediction: dict[str, Any] | None = None) -> dict[str, Any]:
+def build_tool_outcome_judge_payload(example: dict[str, Any], prediction: dict[str, Any] | None = None) -> dict[str, Any]:
     payload = {
-        "incident_example_id": example.get("id"),
-        "schema_version": INCIDENT_EVAL_SCHEMA_VERSION,
+        "tool_outcome_case_id": example.get("id"),
+        "schema_version": TOOL_OUTCOME_REVIEW_SCHEMA_VERSION,
         "source": {
             "framework": example.get("framework"),
             "source_session_id": example.get("source_session_id"),
-            "source_turn_index": example.get("source_turn_index"),
+            "turn_index": example.get("turn_index"),
             "assistant_tool_call_message_id": example.get("assistant_tool_call_message_id"),
             "result_message_id": example.get("result_message_id"),
             "tool_call_id": example.get("tool_call_id"),
@@ -513,7 +514,7 @@ def build_incident_judge_payload(example: dict[str, Any], prediction: dict[str, 
             "immediate_tool_result": preflight_trim_text(example.get("tool_result"), limit=FIELD_LIMITS["tool_result"], label="tool result"),
         },
         "visible_context": {
-            "user_request_excerpt": preflight_trim_text(example.get("user_request_excerpt"), limit=1200, label="user request"),
+            "request_text_excerpt": preflight_trim_text(example.get("request_text_excerpt"), limit=1200, label="user request"),
             "prior_assistant_visible_text": preflight_trim_text(example.get("prior_assistant_visible_text"), limit=900, label="prior assistant"),
             "following_assistant_visible_text": preflight_trim_text(example.get("following_assistant_visible_text"), limit=900, label="following assistant"),
         },
@@ -526,17 +527,17 @@ def build_incident_judge_payload(example: dict[str, Any], prediction: dict[str, 
     return payload
 
 
-def build_incident_batch_judge_payload(items: list[tuple[dict[str, Any], dict[str, Any] | None]]) -> dict[str, Any]:
+def build_tool_outcome_batch_judge_payload(items: list[tuple[dict[str, Any], dict[str, Any] | None]]) -> dict[str, Any]:
     return {
-        "schema_version": "incident_batch_eval_v1",
-        "examples": [build_incident_judge_payload(example, prediction) for example, prediction in items],
+        "schema_version": "tool_outcome_batch_eval_v1",
+        "examples": [build_tool_outcome_judge_payload(example, prediction) for example, prediction in items],
         "expected_output": {
-            "schema_version": "incident_batch_eval_v1",
+            "schema_version": "tool_outcome_batch_eval_v1",
             "results": [
                 {
-                    "incident_example_id": "copy from input incident_example_id",
-                    "label": "not_incident|incident|unsure",
-                    "reason_code": "execution_error|no_result|bad_request|bad_output|other|null",
+                    "tool_outcome_case_id": "copy from input tool_outcome_case_id",
+                    "outcome_label": "ok|problem|unsure",
+                    "reason_code": "execution_error|empty_output|invalid_tool_input|wrong_or_bad_output|other|null",
                     "confidence": 0.0,
                     "evidence_summary": "short visible evidence summary",
                 }
@@ -545,25 +546,25 @@ def build_incident_batch_judge_payload(items: list[tuple[dict[str, Any], dict[st
     }
 
 
-def load_incident_prompt_template() -> str:
-    prompt_path = Path(__file__).parent / "prompts" / "incident_judge.md"
+def load_tool_outcome_prompt_template() -> str:
+    prompt_path = Path(__file__).parent / "prompts" / "tool_outcome_review.md"
     if prompt_path.exists():
         return prompt_path.read_text(encoding="utf-8")
-    return "Evaluate one tool-call incident example. Return strict JSON matching incident_eval_v1."
+    return "Evaluate one tool-call tool_outcome example. Return strict JSON matching tool_outcome_review_v1."
 
 
-def load_incident_batch_prompt_template() -> str:
-    prompt_path = Path(__file__).parent / "prompts" / "incident_judge_batch.md"
+def load_tool_outcome_batch_prompt_template() -> str:
+    prompt_path = Path(__file__).parent / "prompts" / "tool_outcome_review_batch.md"
     if prompt_path.exists():
         return prompt_path.read_text(encoding="utf-8")
-    return "Evaluate each tool-call incident example independently. Return strict JSON matching incident_batch_eval_v1."
+    return "Evaluate each tool-call tool_outcome example independently. Return strict JSON matching tool_outcome_batch_eval_v1."
 
 
 def load_prompt_template() -> str:
-    prompt_path = Path(__file__).parent / "prompts" / "instruction_health_v1.txt"
+    prompt_path = Path(__file__).parent / "prompts" / "turn_case_review_v1.txt"
     if prompt_path.exists():
         return prompt_path.read_text(encoding="utf-8")
-    return "You are evaluating one AI agent turn. Return strict JSON matching instruction_health_eval_v1."
+    return "You are evaluating one AI agent turn. Return strict JSON matching turn_case_review_v1."
 
 
 class HermesLLMJudgeClient:
@@ -639,36 +640,36 @@ class HermesLLMJudgeClient:
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False, indent=2, default=str)},
         ]
 
-    def _messages_for_incident(self, example: dict[str, Any], prediction: dict[str, Any] | None = None) -> list[dict[str, str]]:
-        payload = build_incident_judge_payload(example, prediction)
+    def _messages_for_tool_outcome(self, example: dict[str, Any], prediction: dict[str, Any] | None = None) -> list[dict[str, str]]:
+        payload = build_tool_outcome_judge_payload(example, prediction)
         return [
-            {"role": "system", "content": load_incident_prompt_template()},
+            {"role": "system", "content": load_tool_outcome_prompt_template()},
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False, indent=2, default=str)},
         ]
 
-    def _messages_for_incident_batch(self, items: list[tuple[dict[str, Any], dict[str, Any] | None]]) -> list[dict[str, str]]:
-        payload = build_incident_batch_judge_payload(items)
+    def _messages_for_tool_outcome_batch(self, items: list[tuple[dict[str, Any], dict[str, Any] | None]]) -> list[dict[str, str]]:
+        payload = build_tool_outcome_batch_judge_payload(items)
         return [
-            {"role": "system", "content": load_incident_batch_prompt_template()},
+            {"role": "system", "content": load_tool_outcome_batch_prompt_template()},
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False, indent=2, default=str)},
         ]
 
     def _repair_messages(self, invalid_output: str) -> list[dict[str, str]]:
         return [
-            {"role": "system", "content": "Repair the following evaluator output into exactly one valid JSON object matching schema_version instruction_health_eval_v1. Use `anomalies` for judge findings. Return JSON only."},
+            {"role": "system", "content": "Repair the following evaluator output into exactly one valid JSON object matching schema_version turn_case_review_v1. Use `findings` for judge findings. Return JSON only."},
             {"role": "user", "content": invalid_output[:12000]},
         ]
 
-    def _incident_repair_messages(self, invalid_output: str) -> list[dict[str, str]]:
+    def _tool_outcome_repair_messages(self, invalid_output: str) -> list[dict[str, str]]:
         return [
-            {"role": "system", "content": "Repair the following incident evaluator output into exactly one valid JSON object matching schema_version incident_eval_v1. Return JSON only."},
+            {"role": "system", "content": "Repair the following tool_outcome evaluator output into exactly one valid JSON object matching schema_version tool_outcome_review_v1. Return JSON only."},
             {"role": "user", "content": invalid_output[:12000]},
         ]
 
-    def _incident_batch_repair_messages(self, invalid_output: str, expected_ids: list[str]) -> list[dict[str, str]]:
+    def _tool_outcome_batch_repair_messages(self, invalid_output: str, expected_ids: list[str]) -> list[dict[str, str]]:
         return [
-            {"role": "system", "content": "Repair the following incident batch evaluator output into exactly one valid JSON object with schema_version incident_batch_eval_v1 and a results array. Return JSON only."},
-            {"role": "user", "content": json.dumps({"expected_incident_example_ids": expected_ids, "invalid_output": invalid_output[:12000]}, ensure_ascii=False)},
+            {"role": "system", "content": "Repair the following tool_outcome batch evaluator output into exactly one valid JSON object with schema_version tool_outcome_batch_eval_v1 and a results array. Return JSON only."},
+            {"role": "user", "content": json.dumps({"expected_tool_outcome_case_ids": expected_ids, "invalid_output": invalid_output[:12000]}, ensure_ascii=False)},
         ]
 
     def evaluate_unit(self, unit: dict[str, Any], signals: list[dict[str, Any]]) -> JudgeResult:
@@ -701,21 +702,21 @@ class HermesLLMJudgeClient:
         error = "; ".join(errors) or "no judge routes available"
         data = {
             "schema_version": EVAL_SCHEMA_VERSION,
-            "health_status": "failed",
+            "outcome_status": "failed",
             "confidence": "low",
-            "goal_summary": str(unit.get("user_request") or "")[:160],
+            "goal_summary": str(unit.get("request_text") or "")[:160],
             "observed_outcome": "The evaluator could not obtain a valid LLM judge response.",
-            "primary_reason": f"Evaluator error: {error}"[:500],
+            "summary_reason": f"Evaluator error: {error}"[:500],
             "user_reaction": {"type": "unknown", "used_as_evidence": False, "evidence": ""},
-            "anomalies": [],
-        "prolongation_evidence": {"tool_calls": unit.get("tool_call_count") or 0, "api_calls": unit.get("api_call_count") or 0, "duration_seconds": None, "repeated_actions": []},
+            "findings": [],
+        "prolongation_evidence": {"tool_calls": unit.get("tool_interaction_count") or 0, "api_calls": unit.get("source_session_api_interaction_count") or 0, "duration_seconds": None, "repeated_actions": []},
         "missed_or_mishandled_requirements": [],
-        "request_friction_score": 1.0,
+        "friction_score": 1.0,
     }
         return JudgeResult(data, judge_provider=None, judge_model=None, raw_output="", evaluator_error=error)
 
-    def evaluate_incident(self, example: dict[str, Any], prediction: dict[str, Any] | None = None) -> JudgeResult:
-        messages = self._messages_for_incident(example, prediction)
+    def evaluate_tool_outcome(self, example: dict[str, Any], prediction: dict[str, Any] | None = None) -> JudgeResult:
+        messages = self._messages_for_tool_outcome(example, prediction)
         errors: list[str] = []
         for route in self.resolve_routes():
             raw = ""
@@ -725,12 +726,12 @@ class HermesLLMJudgeClient:
                 token_usage += _extract_token_usage(response)
                 raw = _extract_response_text(response)
                 try:
-                    data = validate_incident_eval_json(extract_json_object(raw))
+                    data = validate_tool_outcome_eval_json(extract_json_object(raw))
                 except Exception:
-                    repair_response = self._call_hermes_llm(route, self._incident_repair_messages(raw), self.temperature, self.max_tokens)
+                    repair_response = self._call_hermes_llm(route, self._tool_outcome_repair_messages(raw), self.temperature, self.max_tokens)
                     token_usage += _extract_token_usage(repair_response)
                     raw = _extract_response_text(repair_response)
-                    data = validate_incident_eval_json(extract_json_object(raw))
+                    data = validate_tool_outcome_eval_json(extract_json_object(raw))
                 return JudgeResult(
                     eval_data=data,
                     judge_provider=route.name if route.name in {"auxiliary.approval", "main", "auto"} else route.provider,
@@ -743,18 +744,18 @@ class HermesLLMJudgeClient:
                 continue
         error = "; ".join(errors) or "no judge routes available"
         data = {
-            "schema_version": INCIDENT_EVAL_SCHEMA_VERSION,
-            "label": "unsure",
+            "schema_version": TOOL_OUTCOME_REVIEW_SCHEMA_VERSION,
+            "outcome_label": "unsure",
             "reason_code": None,
             "confidence": 0.0,
             "evidence_summary": f"Evaluator error: {error}"[:500],
         }
         return JudgeResult(data, judge_provider=None, judge_model=None, raw_output="", evaluator_error=error)
 
-    def evaluate_incidents_batch(self, items: list[tuple[dict[str, Any], dict[str, Any] | None]]) -> JudgeBatchResult:
+    def evaluate_tool_outcomes_batch(self, items: list[tuple[dict[str, Any], dict[str, Any] | None]]) -> JudgeBatchResult:
         if not items:
             return JudgeBatchResult({}, [], judge_provider=None, judge_model=None, raw_output="", token_usage=TokenUsage(calls=0))
-        messages = self._messages_for_incident_batch(items)
+        messages = self._messages_for_tool_outcome_batch(items)
         expected_ids = [str(example.get("id")) for example, _prediction in items]
         errors: list[str] = []
         for route in self.resolve_routes():
@@ -765,12 +766,12 @@ class HermesLLMJudgeClient:
                 token_usage += _extract_token_usage(response)
                 raw = _extract_response_text(response)
                 try:
-                    data_by_id = validate_incident_batch_eval_json(extract_json_object(raw), expected_ids=expected_ids)
+                    data_by_id = validate_tool_outcome_batch_eval_json(extract_json_object(raw), expected_ids=expected_ids)
                 except Exception:
-                    repair_response = self._call_hermes_llm(route, self._incident_batch_repair_messages(raw, expected_ids), self.temperature, self.max_tokens)
+                    repair_response = self._call_hermes_llm(route, self._tool_outcome_batch_repair_messages(raw, expected_ids), self.temperature, self.max_tokens)
                     token_usage += _extract_token_usage(repair_response)
                     raw = _extract_response_text(repair_response)
-                    data_by_id = validate_incident_batch_eval_json(extract_json_object(raw), expected_ids=expected_ids)
+                    data_by_id = validate_tool_outcome_batch_eval_json(extract_json_object(raw), expected_ids=expected_ids)
                 provider = route.name if route.name in {"auxiliary.approval", "main", "auto"} else route.provider
                 results = {
                     example_id: JudgeResult(

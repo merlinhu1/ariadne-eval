@@ -78,15 +78,15 @@ def _tool_events_between(messages: list[dict[str, Any]], start_idx: int, end_idx
                 "id": f"msg:{msg.get('id')}",
                 "source_event_id": str(msg.get("id")),
                 "event_type": "tool",
-                "timestamp": msg.get("timestamp"),
+                "event_at": msg.get("timestamp"),
                 "tool_name": msg.get("tool_name"),
-                "args_hash": None,
-                "args_preview": None,
-                "result_hash": None,
-                "result_preview": content,
-                "result_error": _looks_like_error(content),
+                "input_hash": None,
+                "input_preview": None,
+                "output_hash": None,
+                "output_preview": content,
+                "output_error": _looks_like_error(content),
                 "duration_ms": None,
-                "raw_payload_json": json.dumps({
+                "source_payload_json": json.dumps({
                     "message_id": msg.get("id"),
                     "tool_call_id": msg.get("tool_call_id"),
                     "role": msg.get("role"),
@@ -96,7 +96,7 @@ def _tool_events_between(messages: list[dict[str, Any]], start_idx: int, end_idx
 
 
 def _looks_like_error(text: str) -> bool:
-    return _event_error({"result_preview": text, "result_error": False})
+    return _event_error({"output_preview": text, "output_error": False})
 
 
 def _parse_tool_calls(raw: Any) -> list[dict[str, Any]]:
@@ -140,7 +140,7 @@ def _previous_visible_assistant(messages: list[dict[str, Any]], before_idx: int)
     return None
 
 
-def normalize_incident_examples(session: dict[str, Any], messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def build_tool_outcome_cases(session: dict[str, Any], messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     examples: list[dict[str, Any]] = []
     messages = filter_synthetic_runtime_messages(messages)
     session_id = str(session.get("id"))
@@ -159,7 +159,7 @@ def normalize_incident_examples(session: dict[str, Any], messages: list[dict[str
             continue
         following_idx, following = _find_next_assistant_final(messages, idx + 1)
         del following_idx
-        assistant_message_id = str(msg.get("id"))
+        response_message_id = str(msg.get("id"))
         for call in tool_calls:
             tool_call_id = str(call.get("id"))
             result = _find_tool_result_for_call(messages, idx, tool_call_id)
@@ -169,9 +169,9 @@ def normalize_incident_examples(session: dict[str, Any], messages: list[dict[str
             tool_name, tool_arguments = _tool_call_name_and_args(call)
             if not tool_name and result.get("tool_name"):
                 tool_name = str(result.get("tool_name"))
-            source_event_id = "|".join([session_id, assistant_message_id, result_message_id, tool_call_id])
+            source_event_id = "|".join([session_id, response_message_id, result_message_id, tool_call_id])
             raw_payload = {
-                "assistant_message_id": assistant_message_id,
+                "response_message_id": response_message_id,
                 "result_message_id": result_message_id,
                 "tool_call_id": tool_call_id,
                 "tool_call": call,
@@ -179,27 +179,27 @@ def normalize_incident_examples(session: dict[str, Any], messages: list[dict[str
             for hidden_key in ("reasoning", "reasoning_content", "reasoning_details", "codex_reasoning_items", "codex_message_items"):
                 raw_payload.pop(hidden_key, None)
             examples.append({
-                "id": f"hermes:{session_id}:incident:{assistant_message_id}:{result_message_id}:{tool_call_id}",
+                "id": f"hermes:{session_id}:tool_outcome:{response_message_id}:{result_message_id}:{tool_call_id}",
                 "framework": "hermes",
                 "source_session_id": session_id,
                 "source_event_id": source_event_id,
-                "eval_unit_id": f"hermes:{session_id}:turn:{turn_index}" if turn_index else None,
-                "source_turn_index": turn_index or None,
-                "assistant_tool_call_message_id": assistant_message_id,
+                "turn_case_id": f"hermes:{session_id}:turn:{turn_index}" if turn_index else None,
+                "turn_index": turn_index or None,
+                "assistant_tool_call_message_id": response_message_id,
                 "result_message_id": result_message_id,
                 "tool_call_id": tool_call_id,
                 "tool_name": tool_name,
                 "tool_arguments": tool_arguments,
                 "tool_result": _text(result.get("content"), 6000),
                 "result_timestamp": result.get("timestamp"),
-                "user_request_excerpt": _text(current_user.get("content"), 2000) if current_user else None,
+                "request_text_excerpt": _text(current_user.get("content"), 2000) if current_user else None,
                 "prior_assistant_visible_text": _previous_visible_assistant(messages, idx),
                 "following_assistant_visible_text": _text(following.get("content"), 2000) if following else None,
                 "explicit_caller_expectation": msg.get("explicit_caller_expectation") or result.get("explicit_caller_expectation"),
                 "explicit_caller_interpretation": msg.get("explicit_caller_interpretation") or result.get("explicit_caller_interpretation"),
                 "upstream_intent_source": msg.get("upstream_intent_source") or result.get("upstream_intent_source"),
-                "normalization_version": NORMALIZATION_VERSION,
-                "raw_payload_json": json.dumps(raw_payload, ensure_ascii=False),
+                "case_builder_version": NORMALIZATION_VERSION,
+                "source_payload_json": json.dumps(raw_payload, ensure_ascii=False),
                 "created_at": now,
                 "updated_at": now,
             })
@@ -245,7 +245,7 @@ def _is_document_upload_replay(message: dict[str, Any], following_messages: list
     the start of later compacted sessions, immediately followed by a few restored
     assistant/tool rows and then a synthetic context-compaction message. Treat
     that replay as runtime context, not as a fresh user request; otherwise the
-    same document becomes many eval units.
+    same document becomes many turn cases.
     """
     if message.get("role") != "user":
         return False
@@ -308,7 +308,7 @@ def filter_synthetic_runtime_messages(messages: list[dict[str, Any]]) -> list[di
 
     Context compaction handoff messages, preserved task lists, and max-iteration
     continuation notices are injected as user-role messages but are not user
-    requests. Including them creates fake eval units and false next-user
+    requests. Including them creates fake turn cases and false next-user
     reactions, so normalization drops them and their immediate assistant replies.
     """
     filtered: list[dict[str, Any]] = []
@@ -344,7 +344,7 @@ def filter_synthetic_runtime_messages(messages: list[dict[str, Any]]) -> list[di
 
 
 @dataclass(frozen=True)
-class RequestBoundary:
+class UserTurnBoundary:
     """Current V1 request boundary: one real user message and its response window.
 
     This is a preparatory seam for future multi-message request boundary logic.
@@ -356,18 +356,18 @@ class RequestBoundary:
 
     turn_index: int
     user_index: int
-    user_message_id: str
+    request_message_id: str
     assistant_index: int | None
-    assistant_message_id: str | None
+    response_message_id: str | None
     next_user_index: int | None
-    next_user_message_id: str | None
+    next_request_message_id: str | None
 
 
-def detect_request_boundaries(messages: list[dict[str, Any]]) -> list[RequestBoundary]:
+def detect_user_turn_boundaries(messages: list[dict[str, Any]]) -> list[UserTurnBoundary]:
     """Return V1 request boundaries without changing normalization semantics."""
 
     filtered = filter_synthetic_runtime_messages(messages)
-    boundaries: list[RequestBoundary] = []
+    boundaries: list[UserTurnBoundary] = []
     turn_index = 0
     for idx, msg in enumerate(filtered):
         if msg.get("role") != "user":
@@ -375,14 +375,14 @@ def detect_request_boundaries(messages: list[dict[str, Any]]) -> list[RequestBou
         turn_index += 1
         assistant_idx, assistant = _find_next_assistant_final(filtered, idx + 1)
         next_user_idx, next_user = _find_next_user_after(filtered, assistant_idx)
-        boundaries.append(RequestBoundary(
+        boundaries.append(UserTurnBoundary(
             turn_index=turn_index,
             user_index=idx,
-            user_message_id=str(msg.get("id")),
+            request_message_id=str(msg.get("id")),
             assistant_index=assistant_idx,
-            assistant_message_id=str(assistant.get("id")) if assistant else None,
+            response_message_id=str(assistant.get("id")) if assistant else None,
             next_user_index=next_user_idx,
-            next_user_message_id=str(next_user.get("id")) if next_user else None,
+            next_request_message_id=str(next_user.get("id")) if next_user else None,
         ))
     return boundaries
 
@@ -393,12 +393,12 @@ def normalize_session(
     *,
     previous_turn_pairs: int = 3,
     max_previous_context_chars: int = 6000,
-    max_user_request_chars: int = 4000,
-    max_assistant_response_chars: int = 8000,
+    max_request_text_chars: int = 4000,
+    max_response_text_chars: int = 8000,
 ) -> list[dict[str, Any]]:
-    units: list[dict[str, Any]] = []
+    cases: list[dict[str, Any]] = []
     messages = filter_synthetic_runtime_messages(messages)
-    boundaries = detect_request_boundaries(messages)
+    boundaries = detect_user_turn_boundaries(messages)
     for boundary in boundaries:
         idx = boundary.user_index
         msg = messages[idx]
@@ -407,39 +407,39 @@ def normalize_session(
         assistant = messages[assistant_idx] if assistant_idx is not None else None
         next_user_idx = boundary.next_user_index
         next_user = messages[next_user_idx] if next_user_idx is not None else None
-        assistant_content = _text(assistant.get("content"), max_assistant_response_chars) if assistant else None
+        assistant_content = _text(assistant.get("content"), max_response_text_chars) if assistant else None
         if assistant_content is not None and not assistant_content.strip():
             assistant_content = None
         trace_end_idx = assistant_idx if assistant_content is not None else (next_user_idx - 1 if next_user_idx is not None else None)
-        trace_events = _tool_events_between(messages, idx, trace_end_idx)
+        case_events = _tool_events_between(messages, idx, trace_end_idx)
         started_at = msg.get("timestamp")
         ended_at = assistant.get("timestamp") if assistant else None
         created = time.time()
-        units.append({
+        cases.append({
             "id": f"hermes:{session.get('id')}:turn:{turn_index}",
             "framework": "hermes",
             "source_session_id": str(session.get("id")),
-            "source_turn_index": turn_index,
-            "user_message_id": str(msg.get("id")),
-            "assistant_message_id": str(assistant.get("id")) if assistant else None,
-            "next_user_message_id": str(next_user.get("id")) if next_user else None,
+            "turn_index": turn_index,
+            "request_message_id": str(msg.get("id")),
+            "response_message_id": str(assistant.get("id")) if assistant else None,
+            "next_request_message_id": str(next_user.get("id")) if next_user else None,
             "started_at": started_at,
             "ended_at": ended_at,
             "source": session.get("source"),
             "model": session.get("model"),
             "title": session.get("title"),
             "parent_session_id": session.get("parent_session_id"),
-            "user_request": _text(msg.get("content"), max_user_request_chars),
-            "assistant_response": assistant_content,
-            "previous_context_summary": _collect_previous_context(messages, idx, previous_turn_pairs, max_previous_context_chars),
-            "next_user_reaction_text": _text(next_user.get("content"), max_user_request_chars) if next_user else None,
-            "tool_call_count": len(trace_events),
-            "api_call_count": int(session.get("api_call_count") or 0),
+            "request_text": _text(msg.get("content"), max_request_text_chars),
+            "response_text": assistant_content,
+            "prior_context_summary": _collect_previous_context(messages, idx, previous_turn_pairs, max_previous_context_chars),
+            "next_request_text": _text(next_user.get("content"), max_request_text_chars) if next_user else None,
+            "tool_interaction_count": len(case_events),
+            "source_session_api_interaction_count": int(session.get("source_session_api_interaction_count") or 0),
             "input_tokens": int(session.get("input_tokens") or 0),
             "output_tokens": int(session.get("output_tokens") or 0),
-            "normalization_version": NORMALIZATION_VERSION,
-            "trace_events": trace_events,
+            "case_builder_version": NORMALIZATION_VERSION,
+            "case_events": case_events,
             "created_at": created,
             "updated_at": created,
         })
-    return units
+    return cases

@@ -2,102 +2,75 @@
 status: active
 doc_type: behavior
 truth_kind: behavior
-last_reviewed: 2026-05-19
+last_reviewed: 2026-05-30
 source_of_truth:
   - ../../truthmark/areas/local-runtime.md
   - ../../../src/agent_health/cli.py
-  - ../../../src/agent_health/config.py
   - ../../../src/agent_health/db.py
   - ../../../src/agent_health/scheduler.py
-  - ../../../src/agent_health/scheduler_bootstrap.py
-  - ../../../src/agent_health/judge.py
-  - ../../../src/agent_health/incident_model.py
-  - ../../../src/agent_health/incident_routing.py
 ---
 
 # CLI And Sidecar Storage
 
 ## Purpose
 
-This behavior gives users a local command-line workflow and sidecar SQLite database for inspecting, importing, judging, querying request evaluation units, and managing ML-first tool-call incident examples.
+This behavior gives users a local command-line workflow and sidecar SQLite database for importing, reviewing, querying turn cases, and managing tool outcome reviews.
 
 ## Scope
 
-This doc owns CLI commands, Hermes-home initialization, judge config defaults, sidecar database schema, and local runtime behavior.
+This doc owns CLI commands, sidecar database schema, scheduler review jobs, and local runtime storage behavior.
 
 ## Current Behavior
 
-- The CLI exposes `init`, `inspect hermes`, `import hermes`, `units`, `incidents`, `signals`, ML-first `incident examples`, `incident export-training`, `incident label`, `incident judge-label`, `incident predict`, `incident train`, `eval`, `list`, `show`, `summary`, `dashboard install`, `scheduler`, and `schedule` commands.
-- `init` creates the instruction-health home under the Hermes profile and migrates the sidecar eval database.
-- `init` prints that Hermes dashboard support is available through an explicit opt-in plugin install.
-- `init` also prints the judge provider locality caveat because the judge uses Hermes provider/model resolution by default.
-- `import hermes` reads Hermes sessions, normalizes request eval units, stores trace events and deterministic signals, and also upserts normalized incident examples for assistant tool-call/immediate-result pairs.
-- `units` lists recently imported eval units from the sidecar database.
-- `incidents` lists canonical tool-call incident examples with their latest authoritative label and latest prediction without calling the LLM judge; `incidents --summary` reports counts by canonical labels and predictions.
-- `signals` recomputes and stores deterministic signals for one eval unit.
-- `eval --due` loads imported due units, recomputes deterministic evidence signals, applies deterministic priority prefiltering, builds aggressively trimmed judge payloads with a configurable judgement threshold (`strict`, `balanced`, or `relaxed`; default `strict`), requires the request-level LLM judge to return `request_friction_score`, stores `llm_evals` plus `anomalies` rows, and records provider-reported judge token usage. It then uses any remaining `--max-judge-calls` budget to label unlabeled tool-call incident examples through batched incident-specific judge calls and stores those labels in `incident_labels`, not request-level eval/anomaly tables. The default run considers at most 10 request candidates, skips priority-0 units, and is budget-gated to at most 5 total judge calls across both layers.
-- `incident export-training` is the default ML-first incident training export and emits only accepted incident-specific labels from `incident_labels`; it excludes request anomaly tables, legacy incident reviews, deterministic signals, legacy rule labels, and ML fallback predictions.
-- `incident label` inserts accepted human or human-correction labels for a stored incident example by example id or composite source key. Human labels receive higher training weights than incident LLM labels.
-- `incident judge-label` sends incident examples to the incident-specific judge in configurable batches, stores accepted incident labels in `incident_labels`, supports `--since` current-window targeting, can prioritize budget-fallback/deferred/missing/low-confidence prediction gaps, and retries rows missing from a batch result one-by-one by default; it does not write request-level `llm_evals` or `anomalies`.
-- `incident predict` loads the promoted ML-first incident model or an explicit model path, writes `incident_predictions` with routed LLM budget availability, optionally judges deferred examples while incident judge budget remains, and stores unavailable/over-budget best-effort ML fallback predictions without creating labels or leaving them marked as deferred.
-- `incident train` trains from accepted incident labels, writes the model artifact, smoke-checks the artifact before recording an `incident_models` row, and auto-promotes by default only when the candidate has more accepted training records than the currently promoted model. `--no-auto-promote` disables promotion.
-- Deterministic incident subtypes, the old `ml` command group, and the old separate incident-review table are removed rather than preserved for compatibility.
-- Judge routing inherits Hermes models by trying configured `auxiliary.approval` first, then the Hermes main provider/model.
-- `list`, `show`, and `summary` query latest judged results from the sidecar database; `list --details` prints request, next-user reaction, observed outcome, and anomaly evidence context for each row.
-- The sidecar database exposes recent-unit listing plus a session-scoped unit lookup that filters by `source_session_id` and `since` before applying its limit, allowing dashboard session-detail views to inspect an older session without being crowded out by newer units from other sessions.
-- The V1 sidecar SQLite schema includes eval units, trace events, deterministic signals, LLM evals, anomalies, incident eval examples, incident labels, incident predictions, incident model registry rows, eval state tables, eval task rows, and eval run rows. The canonical incident source of truth is `incident_eval_examples` plus `incident_labels` and `incident_predictions`.
-- `dashboard install` copies the bundled dashboard plugin into `<hermes-home>/plugins/ariadne-eval/dashboard`. By default it also installs `<hermes-home>/scripts/ariadne_eval_scheduler_watchdog.py` and creates or updates a local-output Hermes cron job named `Ariadne Eval scheduler watchdog` on `every 10m`; the watchdog starts a scheduler daemon with `--poll-seconds 600` so dashboard-created eval tasks have a supervised, low-frequency scheduler consumer when Hermes cron is active. `--no-scheduler-watchdog` preserves tab-only installation for users who supervise `agent-health scheduler run` themselves.
-- `schedule list`, `schedule show`, and `schedule runs` inspect eval task and run state without importing sessions, calling the judge, or creating eval runs. `schedule set` changes task configuration. `schedule pause` disables an existing task, `schedule resume` enables an existing task and marks it due at the current wall-clock time, and `schedule run-now` explicitly enables an existing task and marks it due at the current wall-clock time.
-- Eval task updates by displayed task id or by task name mutate the original task row. Task creation and updates reject unsupported schedule kinds, including `cron`, and accept only `interval` and `continuous` schedules until cron parsing is implemented. Numeric scheduler limits and intervals are validated before storage so negative intervals, negative budgets, zero candidate limits, and invalid boolean controls do not enter eval task configuration.
-- `scheduler tick` claims due enabled eval tasks and runs one scheduler pass. `scheduler run` polls for due work at `--poll-seconds` intervals and prints run summaries when work is performed.
+- The CLI exposes `init`, `inspect hermes`, `import hermes`, `cases`, `cases show`, `case-signals`, `review --due`, `reviews list`, `reviews summary`, `tool-outcomes cases`, `tool-outcomes review`, `tool-outcomes llm-review`, `tool-outcomes predict`, `tool-outcomes train-reviewer`, `tool-outcomes export-training`, `dashboard install`, `scheduler`, and `review-jobs` commands.
+- `import hermes` stores source sessions, turn cases, case events, tool interactions, tool outcome cases, and case signals in the sidecar database.
+- `review --due` reviews due turn cases first, stores `case_reviews` and `case_findings`, and records prompt/completion/total token usage. Automatic LLM turn-case review is fail-closed: a turn case with a prior automatic LLM `case_review`, automatic LLM judge claim, child tool-outcome automatic LLM review, or child tool-outcome automatic LLM judge claim is never automatically judged by an LLM again.
+- Automatic LLM tool-outcome review uses remaining review budget only for tool outcome cases with no prior automatic LLM `tool_outcome_review`, no tool-outcome automatic LLM judge claim, and no parent turn case automatic LLM review or claim. Candidate selection and the immediate pre-call path both enforce this guard.
+- Automatic LLM claims live in `automatic_llm_review_claims`, are acquired atomically before each automatic LLM call, and are never deleted as a retry mechanism. Failed, interrupted, or partially completed automatic LLM attempts remain spend barriers.
+- Refreshing or replacing a turn-case review does not mutate existing tool outcome reviews.
+- `tool-outcomes review` writes human or human-correction tool outcome reviews. `tool-outcomes predict` writes ML-model tool outcome reviews. Human correction, imported reviews, and local ML predictions are not blocked by the automatic LLM claim guard.
+- `tool-outcomes train-reviewer` trains from training-eligible tool outcome reviews and records tool outcome reviewer model metadata under `tool_outcome_reviewer_models`.
+- `review-jobs` manages stored recurring review job configuration and run history; read commands are read-only and explicit run-now/resume actions only mark work due for the scheduler. `review-jobs set --max-judge-total-tokens` stores the scheduler run token cap as `max_review_total_tokens`.
+- The sidecar schema is the clean turn-case model: `source_sessions`, `turn_cases`, `case_events`, `tool_interactions`, `case_signals`, `case_reviews`, `case_findings`, `tool_outcome_cases`, `tool_outcome_reviews`, `automatic_llm_review_claims`, `tool_outcome_reviewer_models`, plus review job/run/feedback/state tables.
 
 ## Core Rules
 
 - Evaluator state lives under the Hermes profile in `instruction-health/`.
-- V1 initialization creates `config.yaml`, `evals.db`, and `logs/`; it does not create `events.jsonl`.
-- Judge routing belongs to the Hermes runtime: Ariadne should prefer `auxiliary.approval` when configured and then fall back to the Hermes main provider/model.
-- Due selection should avoid budget spam: no realtime judging, no calls from import/list/show/signals, no re-eval after any prior request judgement unless `--reevaluate` is explicit, no-reaction units wait for the cooldown, deterministic prefiltering prioritizes corrections/tool errors/loops/prolonged runs, preflight trimming removes bulky low-value evidence before provider calls, and `--max-judge-calls` caps each invocation across request-level judging plus incident-specific labeling.
-- Scheduler due selection is explicit: listing tasks or runs is read-only, while `schedule run-now` and `schedule resume` only mark enabled tasks due for the scheduler rather than running evaluation inline.
-- CLI errors should return a non-zero command result and print a concise error message.
-- Accepted ML-first incident training labels may come only from `incident_llm_judge`, `human`, or `human_correction`. Request anomaly labels, ML self-predictions, and legacy deterministic/rule labels are rejected as accepted incident training rows.
+- No active compatibility aliases, old command aliases, old JSON duplicate keys, or old sidecar tables are part of the clean schema.
+- Import, review, scheduler execution, and model training require explicit CLI or dashboard actions.
+- Case evidence is extracted and stored before LLM judgment.
 
 ## Flows And States
 
-- Init flow: resolve Hermes home, create config/log paths, migrate SQLite, print the dashboard opt-in note and judge provider caveat.
-- Import flow: discover sessions, normalize each session into request units and incident examples, upsert units and trace events, replace deterministic evidence signals, and upsert incident examples.
-- Eval flow: a manual `agent-health eval --due` command loads due units, extracts deterministic evidence signals, applies deterministic priority and max-call budget gates, trims bulky judge evidence, calls the request-level judge, and stores `llm_evals` plus `anomalies` rows. If request judging does not consume the invocation budget, the same command spends the remaining judge-call budget on batched incident-specific judging for unlabeled incident examples and stores accepted labels in `incident_labels`.
-- ML-first incident flow: `incident export-training` writes accepted incident-label JSONL rows, `incident train` writes model artifacts below `instruction-health/incident-models/<model_version>/` by default, `incident predict` stores prediction records, and `incident judge-label` or deferred prediction judging stores accepted incident labels.
-- Scheduler flow: an eval task stores schedule configuration, next due time, cursor state, and budget limits. `schedule run-now` marks a task due now without creating a run; the next scheduler tick claims the task, imports Hermes sessions oldest-first for scheduler cursor safety, evaluates due units with one shared task budget for request judging and incident labeling, records an eval run, and advances the next due time. Running scheduler workers heartbeat their lease between long phases, and a stale worker cannot later finalize a run that has already failed or been reclaimed.
+- Init flow creates config/log paths and migrates a clean sidecar database.
+- Import flow discovers Hermes sessions, normalizes review-domain rows, and replaces case signals for imported turn cases.
+- Review flow loads due turn cases, applies priority and budget gates, acquires an automatic LLM claim immediately before any automatic LLM call, stores case reviews/findings, then optionally reviews eligible tool outcome cases with the same claim guard.
+- Scheduler flow claims due review jobs, imports Hermes sessions, runs the same claim-gated review path, heartbeats the lease, stores review run metrics, and schedules the next due time.
 
 ## Contracts
 
 - The placeholder console command is `agent-health`.
-- The default eval DB path is `<hermes-home>/instruction-health/evals.db`.
-- The recorded eval schema version is `eval_schema_v1`.
-- Incident example uniqueness is enforced over `(source_session_id, assistant_tool_call_message_id, result_message_id, tool_call_id)`.
-- Incident model registry rows persist across normal sidecar migrations, can be listed for dashboard selection, and promotion keeps exactly one promoted model row while preserving previous artifact registry rows for rollback.
+- The default database path is `<hermes-home>/instruction-health/evals.db`.
+- The recorded schema version state is `turn_case_review_schema_v1`.
+- Tool outcome review labels are `problem`, `ok`, and `unsure`.
+- `--reevaluate` may revisit non-automatic state, but it cannot rerun automatic LLM reviews or bypass automatic LLM claims.
 
 ## Product Decisions
 
-- Decision (2026-05-19): The MVP uses a local SQLite sidecar database rather than JSONL for evaluations.
-- Decision (2026-05-24): Recurring evaluation uses explicit local eval tasks and scheduler commands. Listing task state is read-only; run-now/resume only mark tasks due, and scheduler ticks perform the actual import/evaluation work.
-- Decision (2026-05-19): LLM eval and anomaly tables are part of V1 because judged ratings are the core output.
-- Decision (2026-05-23): ML-first incident training uses accepted incident-specific LLM/human labels by default. Rule-labeled and reviewed legacy classifier commands were removed rather than preserved as compatibility surfaces.
-- Decision (2026-05-23): Incident model auto-promotion is count-driven and disableable: a smoke-checked candidate is promoted by default when its accepted incident training-record count exceeds the current promoted model, while `--no-auto-promote` records the smoke-checked candidate without promotion.
-- Decision (2026-05-23): The normal `eval --due` batch orchestrates request-level anomaly judging first, then incident-specific LLM labeling with the remaining judge budget, while keeping the two storage outputs separate.
-
-- Decision (2026-05-20): User incident reviews are captured as explicit sidecar labels and only affect model behavior after an auditable retraining command; no online learning happens during import, eval, or dashboard browsing.
+- Decision (2026-05-30): The sidecar schema uses the clean turn-case and tool-outcome review model with no old-table compatibility.
+- Decision (2026-05-30): CLI command spelling follows the review-domain model and old aliases are not retained.
+- Decision (2026-05-30): Automatic LLM judging is fail-closed for both turn cases and tool outcome cases; prior automatic LLM review history or claim history blocks another automatic LLM call for that target or its paired parent/child turn context.
+- Decision (2026-05-30): Automatic LLM claim failures prefer skipped coverage over duplicate LLM spend.
 
 ## Rationale
 
-A CLI plus SQLite keeps the MVP inspectable and useful without requiring passive hook capture, a standalone dashboard, or hosted observability system. The opt-in Hermes dashboard plugin reuses that same SQLite data for visualization, and the scheduler reuses the explicit local CLI import/eval path through stored eval tasks rather than realtime background capture. Keeping request judge/anomaly tables separate from incident examples, labels, predictions, and models preserves the different training targets while supporting both workflows in one sidecar database.
+The local runtime is easier to audit when CLI verbs, database tables, JSON schemas, and scheduler metrics use the same domain nouns. Keeping the guard as a one-way claim and selection rule rather than a cleanup rule preserves review history while preventing repeat automatic LLM spend.
 
 ## Non-Goals
 
-- This doc does not own future Hermes hook internals.
-- This doc owns the install command for the Hermes dashboard plugin but not the dashboard query/API/UI behavior.
+- This doc does not own dashboard visualization details.
+- This doc does not define deployment migration from older development databases.
 
 ## Maintenance Notes
 
-- Update this doc when CLI commands, scheduler behavior, database tables, judge config, model registry behavior, or initialization paths change.
-- Related tests currently include `tests/test_db_and_signals.py`, `tests/test_cli.py`, `tests/test_scheduler.py`, `tests/test_scheduler_cli_and_plugin.py`, `tests/test_incident_model.py`, `tests/test_incident_features.py`, `tests/test_incident_routing.py`, and `tests/test_judge_contract.py`.
+Update this doc when CLI commands, database tables, scheduler metrics, review job behavior, or local storage contracts change.

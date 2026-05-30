@@ -11,8 +11,8 @@ It is built for cases that are easy to miss in a final transcript:
 - the assistant says the task is complete, but a command or tool failed;
 - the agent spends extra turns repeating the same tool, API call, or shell command;
 - the next user message is a correction, complaint, or repeat of the same request;
-- a tool result looks alarming, but may be an expected failure or a bad input rather than a real incident;
-- reviewers need a local set of accepted incident labels for later training and calibration.
+- a tool result looks alarming, but may be an expected failure or a bad input rather than a real tool outcome;
+- reviewers need a local set of accepted tool outcome reviews for later training and calibration.
 
 Ariadne Eval stays local. It reads Hermes `state.db`, writes a sidecar SQLite database, calls judges only from explicit CLI commands, and does not store hidden provider reasoning.
 
@@ -20,13 +20,13 @@ Ariadne Eval stays local. It reads Hermes `state.db`, writes a sidecar SQLite da
 
 | Area | Recorded data |
 |---|---|
-| Request unit | One eval unit per user message, with bounded prior context, assistant response, tool messages, and next-user reaction when available. |
-| Deterministic evidence | Tool errors, repeated actions, API/tool counts, completion-claim hints, reaction classification, and other trace signals. |
-| Request judgement | `succeed`, `failed`, `mishandled`, or `prolonged`, plus `request_friction_score` from `0.0` to `1.0`. |
-| Incident review | Tool-call labels: `incident`, `not_incident`, or `unsure`, with reason code, confidence, reviewer source, and comments. |
+| Request unit | One turn case per user message, with bounded prior context, assistant response, tool messages, and next-user reaction when available. |
+| Case evidence | Tool errors, repeated actions, API/tool counts, completion-claim hints, reaction classification, and other trace case-signals. |
+| Request judgement | `succeed`, `failed`, `mishandled`, or `prolonged`, plus `friction_score` from `0.0` to `1.0`. |
+| Tool Outcome review | Tool-call labels: `problem`, `ok`, or `unsure`, with reason code, confidence, reviewer source, and comments. |
 | Review surfaces | CLI output and an optional Hermes dashboard tab, both reading the same local `evals.db`. |
 
-Deterministic evidence is input, not the verdict. The request judge and human reviewer still decide what the trace means.
+Case evidence is input, not the verdict. The request judge and human reviewer still decide what the trace means.
 
 ## Data path
 
@@ -36,13 +36,13 @@ flowchart LR
 
     subgraph CLI[Ariadne Eval CLI]
         I[inspect/import hermes]
-        U[request units]
-        E[deterministic evidence]
-        X[incident examples]
+        U[request cases]
+        E[case evidence]
+        X[tool-outcomes cases]
         Q[budgeted due queue]
         RJ[LLM request judge]
-        IM[incident model + rules]
-        IJ[optional incident judge]
+        IM[tool outcome model + rules]
+        IJ[optional tool outcome judge]
     end
 
     DB[(local evals.db)]
@@ -121,17 +121,17 @@ Import recent sessions into the sidecar database:
 agent-health --hermes-home ~/.hermes import hermes --since 24h --limit 100
 ```
 
-Inspect normalized units and deterministic signals:
+Inspect normalized cases and case signals:
 
 ```bash
-agent-health --hermes-home ~/.hermes units --limit 20
-agent-health --hermes-home ~/.hermes signals hermes:<session_id>:turn:<n>
+agent-health --hermes-home ~/.hermes cases --limit 20
+agent-health --hermes-home ~/.hermes case-signals hermes:<session_id>:turn:<n>
 ```
 
-Run the request judge for due units:
+Run the request judge for due cases:
 
 ```bash
-agent-health --hermes-home ~/.hermes eval --due
+agent-health --hermes-home ~/.hermes review --due
 ```
 
 Review results:
@@ -142,41 +142,41 @@ agent-health --hermes-home ~/.hermes show hermes:<session_id>:turn:<n>
 agent-health --hermes-home ~/.hermes summary
 ```
 
-`eval --due` is deliberately budgeted. It considers a small due batch, prioritizes units with deterministic evidence, skips previously judged units unless `--reevaluate` is set, and supports `--dry-run` before spending judge calls.
+`review --due` is deliberately budgeted. It considers a small due batch, prioritizes cases with case evidence, skips previously judged cases unless `--reevaluate` is set, and supports `--dry-run` before spending judge calls.
 
-## Incident workflow
+## Tool Outcome workflow
 
-Request scoring asks, "How did the agent handle this user request?" Incident review asks a narrower question: "Is this specific tool call/result a real execution incident?"
+Request scoring asks, "How did the agent handle this user request?" Tool Outcome review asks a narrower question: "Is this specific tool call/result a real execution tool outcome?"
 
-List incident examples that still need review:
+List tool-outcomes cases that still need review:
 
 ```bash
-agent-health --hermes-home ~/.hermes incident examples --unlabeled --limit 20
+agent-health --hermes-home ~/.hermes tool-outcomes cases --unlabeled --limit 20
 ```
 
-Let the incident judge label a bounded batch:
+Let the tool outcome judge label a bounded batch:
 
 ```bash
-agent-health --hermes-home ~/.hermes incident judge-label --limit 20 --max-judge-calls 5
+agent-health --hermes-home ~/.hermes tool-outcomes llm-review --limit 20 --max-judge-calls 5
 ```
 
 Add or correct a human label:
 
 ```bash
-agent-health --hermes-home ~/.hermes incident label --example-id incident:<id> \
-  --label incident --reason-code execution_error --confidence 1.0 \
+agent-health --hermes-home ~/.hermes tool-outcomes review --tool-outcome-case-id tool_outcome:<id> \
+  --label problem --reason-code execution_error --confidence 1.0 \
   --comment "tool failed and the final answer claimed completion"
 ```
 
-Export accepted labels, train a local incident model, and run ML-first prediction with judge deferral enabled:
+Export accepted labels, train a local tool outcome model, and run ML-first prediction with judge deferral enabled:
 
 ```bash
-agent-health --hermes-home ~/.hermes incident export-training > incident-training.jsonl
-agent-health --hermes-home ~/.hermes incident train --auto-promote
-agent-health --hermes-home ~/.hermes incident predict --judge-deferred --max-judge-calls 5
+agent-health --hermes-home ~/.hermes tool-outcomes export-training > tool-outcome-training.jsonl
+agent-health --hermes-home ~/.hermes tool-outcomes train-reviewer --auto-promote
+agent-health --hermes-home ~/.hermes tool-outcomes predict --judge-deferred --max-judge-calls 5
 ```
 
-The intended loop is human/LLM labels first, then a promoted local model for routine incident decisions, with optional LLM judgement for deferred cases. Human corrections stay auditable and can be exported again for retraining.
+The intended loop is human/LLM labels first, then a promoted local model for routine tool outcome decisions, with optional LLM judgement for deferred cases. Human corrections stay auditable and can be exported again for retraining.
 
 ## Dashboard
 
@@ -186,11 +186,11 @@ Install the optional Hermes dashboard tab:
 agent-health --hermes-home ~/.hermes dashboard install
 ```
 
-Reload or restart Hermes, then open the Ariadne Eval tab. It shows request friction, statuses, anomalies, sessions, incident examples, predictions, and label controls from the local `evals.db`.
+Reload or restart Hermes, then open the Ariadne Eval tab. It shows request friction, statuses, findings, sessions, tool outcome cases, predictions, and label controls from the local `evals.db`.
 
-By default, installation also registers a quiet Hermes cron watchdog that starts `agent-health scheduler run` when scheduled eval tasks need a consumer. Use `--no-scheduler-watchdog` only if you already supervise the scheduler with systemd, launchd, Docker, or another process manager.
+By default, installation also registers a quiet Hermes cron watchdog that starts `agent-health scheduler run` when scheduled review jobs need a consumer. Use `--no-scheduler-watchdog` only if you already supervise the scheduler with systemd, launchd, Docker, or another process manager.
 
-The dashboard is intentionally constrained: it is a review/configuration surface over local data. Page loads do not import sessions, call the judge, or create eval runs; explicit scheduler controls mark tasks due for the scheduler worker.
+The dashboard is intentionally constrained: it is a review/configuration surface over local data. Page loads do not import sessions, call the judge, or create review runs; explicit scheduler controls mark tasks due for the scheduler worker.
 
 ## Boundaries
 

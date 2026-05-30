@@ -26,10 +26,10 @@ Code surface:
 - src/agent_health/scheduler_bootstrap.py
 - src/agent_health/__init__.py
 - examples/**
-- tests/test_db_and_signals.py
-- tests/test_cli.py
+- tests/test_db_review_guards.py
+- tests/test_cli_review_jobs.py
 - tests/test_scheduler.py
-- tests/test_scheduler_bootstrap.py
+- tests/test_scheduler_watchdog_contracts.py
 
 Update truth when:
 - CLI commands or arguments change

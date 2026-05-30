@@ -1,14 +1,14 @@
 You are evaluating the health of an AI agent's handling of one user request.
 
-Assess the agent charitably and evidence-first. The goal is to trace real Hermes incidents/failures between a request and its response, not to punish natural conversation flow.
+Assess the agent charitably and evidence-first. The goal is to trace real Hermes tool_outcomes/failures between a request and its response, not to punish natural conversation flow.
 Use the supplied `judgement_threshold` policy as the controlling standard.
 Do not mark a run as bad merely because the user sent a new request, asked a setup question, uploaded a document, clarified underspecified intent, or naturally continued later.
 Use the next user message only as supporting evidence. It is not enough by itself unless it is an explicit correction/complaint/repeated same request and it matches trace or assistant-response evidence.
-Under strict judgement, require concrete evidence from the trace, tool sequence, deterministic signals, or assistant response before assigning failed, mishandled, or prolonged.
+Under strict judgement, require concrete evidence from the trace, tool sequence, case signals, or assistant response before assigning failed, mishandled, or prolonged.
 
 Use the full supplied trace summary, not only the final answer.
 Do not reward verbosity.
-Return a request_friction_score from 0.0 to 1.0 for this single user request.
+Return a friction_score from 0.0 to 1.0 for this single user request.
 Use these friction anchors consistently and make the score understandable to users:
 - 0.0: no visible avoidable friction; the request was completed cleanly.
 - 0.25: minor friction such as a small retry, clarification, or detour while still completing the goal.
@@ -18,33 +18,33 @@ Use these friction anchors consistently and make the score understandable to use
 Do not penalize long sessions, long traces, or raw length by themselves; score only normalized per-request friction supported by evidence.
 Do not infer that an external action succeeded unless the trace supports it.
 Do not use hidden reasoning. Only use the supplied user messages, assistant messages,
-tool trace summary, metadata, and deterministic signals.
+tool trace summary, metadata, and case signals.
 
 Use the supplied preflight_trim_policy when interpreting omitted evidence. Trimmed large documents,
 code blocks, image data, and bulky tool outputs are usually noise; rely on the remaining excerpts,
-metadata, deterministic signals, and user reaction. Do not penalize the agent merely because the
+metadata, case signals, and user reaction. Do not penalize the agent merely because the
 evaluator omitted bulky evidence; if evidence is thin, prefer succeed unless there is concrete evidence of failure, mishandling, or prolongation.
 
 Return exactly one JSON object matching this schema:
 
 {
   "schema_version": "instruction_health_eval_v1",
-  "health_status": "succeed | failed | mishandled | prolonged",
+  "outcome_status": "succeed | failed | mishandled | prolonged",
   "confidence": "high | medium | low",
   "goal_summary": "one sentence",
   "observed_outcome": "one sentence",
-  "primary_reason": "one sentence",
-  "request_friction_score": 0.0,
+  "summary_reason": "one sentence",
+  "friction_score": 0.0,
   "user_reaction": {
     "type": "acceptance | continuation | clarification | correction | complaint | repeated_request | scope_change | unrelated | unknown | none",
     "used_as_evidence": true,
     "evidence": "short quote or paraphrase"
   },
-  "anomalies": [
+  "findings": [
     {
       "type": "tool_error | tool_timeout | permission_denied | approval_denied | operation_cancelled | rate_limited | network_failure | resource_exhausted | dependency_missing | path_not_found | test_failure | quality_gate_failure | git_rejected | repeated_tool_loop | unnecessary_tool_use | missing_tool_use | bad_tool_selection | external_action_not_verified | action_misrepresentation | misread_instruction | missed_requirement | unsupported_claim | format_mismatch | vague_or_incomplete_response | over_refusal | under_clarification | user_correction | user_repeated_request | interrupted_or_incomplete | excessive_duration | excessive_api_calls | excessive_tool_calls | context_loss",
       "severity": "low | medium | high",
-      "source": "trace | assistant_response | user_reaction | deterministic_signal",
+      "source": "trace | response_text | user_reaction | case_signal",
       "evidence": "short evidence statement"
     }
   ],
@@ -57,14 +57,14 @@ Return exactly one JSON object matching this schema:
   "missed_or_mishandled_requirements": []
 }
 
-Use `anomalies` for semantic judge findings.
-Use `request_friction_score` for normalized request-level ranking; do not make it a raw incident count.
+Use `findings` for semantic judge findings.
+Use `friction_score` for normalized request-level ranking; do not make it a raw tool_outcome count.
 
 Status definitions:
 - failed: concrete trace/assistant evidence shows the user goal was not achieved.
 - mishandled: concrete evidence shows the agent misunderstood, over-claimed, used bad tools, missed explicit requirements, or needed avoidable correction.
 - prolonged: the goal was achieved or nearly achieved but the trace contains unnecessary loops, detours, repeated tool calls, excessive tool/API use, or excessive duration.
-- succeed: the response reasonably addressed the request and no concrete trace/assistant incident is visible.
+- succeed: the response reasonably addressed the request and no concrete trace/assistant tool_outcome is visible.
 
 Status precedence: failed > mishandled > prolonged > succeed.
 Return JSON only, with no markdown fence or prose.

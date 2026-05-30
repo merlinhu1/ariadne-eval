@@ -1,11 +1,11 @@
 import unittest
 
-from agent_health.incident_features import build_incident_features
+from agent_health.tool_outcome_features import build_tool_outcome_features
 
 
-class IncidentFeaturesTest(unittest.TestCase):
+class ToolOutcomeFeaturesTest(unittest.TestCase):
     def test_features_include_structured_tool_result_evidence_without_labeling(self):
-        features = build_incident_features({
+        features = build_tool_outcome_features({
             "id": "e1",
             "assistant_tool_call_message_id": "a",
             "result_message_id": "r",
@@ -13,7 +13,7 @@ class IncidentFeaturesTest(unittest.TestCase):
             "tool_name": "terminal",
             "tool_arguments": '{"cmd":"pytest"}',
             "tool_result": '{"exit_code":1,"stderr":"failed"}',
-            "user_request_excerpt": "run tests",
+            "request_text_excerpt": "run tests",
             "reasoning": "hidden",
         })
 
@@ -26,7 +26,7 @@ class IncidentFeaturesTest(unittest.TestCase):
         self.assertNotIn("reasoning", str(features))
 
     def test_missing_required_source_fields_marks_insufficient(self):
-        features = build_incident_features({"tool_name": "terminal", "tool_result": ""})
+        features = build_tool_outcome_features({"tool_name": "terminal", "tool_result": ""})
 
         self.assertTrue(features["insufficient_for_classification"])
         self.assertTrue(features["tool_result_empty"])

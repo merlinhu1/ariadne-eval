@@ -5,21 +5,21 @@ import types
 from pathlib import Path
 from unittest import mock
 
-from agent_health import incident_taxonomy, judge
+from agent_health import tool_outcome_taxonomy, judge
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class JudgeContractTest(unittest.TestCase):
-    def test_request_and_incident_label_sets_are_canonical(self):
+    def test_request_and_tool_outcome_label_sets_are_canonical(self):
         self.assertEqual(judge.HEALTH_STATUSES, {"succeed", "failed", "mishandled", "prolonged"})
-        self.assertEqual(judge.INCIDENT_LABELS, {"incident", "not_incident", "unsure"})
-        self.assertEqual(incident_taxonomy.INCIDENT_DECISION_LABELS, {"incident", "not_incident", "unsure"})
+        self.assertEqual(judge.TOOL_OUTCOME_LABELS, {"problem", "ok", "unsure"})
+        self.assertEqual(tool_outcome_taxonomy.TOOL_OUTCOME_DECISION_LABELS, {"problem", "ok", "unsure"})
 
-        for label in ("incident", "not_incident", "unsure"):
+        for label in ("problem", "ok", "unsure"):
             with self.subTest(label=label):
-                self.assertEqual(incident_taxonomy.validate_incident_decision_label(label), label)
+                self.assertEqual(tool_outcome_taxonomy.validate_tool_outcome_decision_label(label), label)
 
     def test_judge_routes_prefer_auxiliary_approval_before_main(self):
         routes = judge.build_judge_routes(
@@ -71,24 +71,24 @@ class JudgeContractTest(unittest.TestCase):
         self.assertEqual(routes[1].provider, "main-provider")
         self.assertEqual(routes[1].model, "main-model")
 
-    def test_request_friction_score_is_required_and_bounded(self):
+    def test_friction_score_is_required_and_bounded(self):
         base = {
-            "health_status": "succeed",
+            "outcome_status": "succeed",
             "confidence": "high",
-            "primary_reason": "completed",
-            "request_friction_score": 0.0,
-            "anomalies": [],
+            "summary_reason": "completed",
+            "friction_score": 0.0,
+            "case_findings": [],
         }
 
-        self.assertEqual(judge.validate_eval_json(base)["request_friction_score"], 0.0)
+        self.assertEqual(judge.validate_eval_json(base)["friction_score"], 0.0)
         for score in (-0.1, 1.1):
             with self.subTest(score=score):
-                payload = dict(base, request_friction_score=score)
+                payload = dict(base, friction_score=score)
                 with self.assertRaises(ValueError):
                     judge.validate_eval_json(payload)
         with self.assertRaises(ValueError):
             payload = dict(base)
-            del payload["request_friction_score"]
+            del payload["friction_score"]
             judge.validate_eval_json(payload)
 
     def test_dashboard_plugin_copy_is_request_first_and_tri_state(self):
@@ -96,11 +96,11 @@ class JudgeContractTest(unittest.TestCase):
         required = [
             "Request friction",
             "Requests needing attention",
-            "request_friction_score",
+            "friction_score",
             "friction_band",
-            "Anomaly timeline",
-            "Incident",
-            "Not incident",
+            "Finding timeline",
+            "Problem",
+            "OK",
             "Unsure",
         ]
 

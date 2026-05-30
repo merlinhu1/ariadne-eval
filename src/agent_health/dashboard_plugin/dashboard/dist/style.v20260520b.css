@@ -363,12 +363,12 @@
   width: 100%;
 }
 
-.ae-timeline-incidents {
+.ae-timeline-tool_outcomes {
   background: #f97316;
   display: block;
 }
 
-.ae-timeline-anomalies {
+.ae-timeline-findings {
   background: #ef4444;
   display: block;
 }

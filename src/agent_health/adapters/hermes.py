@@ -6,7 +6,7 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any
 
-from agent_health.normalize import normalize_incident_examples, normalize_session
+from agent_health.normalize import build_tool_outcome_cases, normalize_session
 
 HIDDEN_MESSAGE_FIELDS = {
     "reasoning",
@@ -19,9 +19,9 @@ HIDDEN_MESSAGE_FIELDS = {
 SESSION_FIELDS = [
     "id", "source", "user_id", "model", "model_config", "system_prompt",
     "parent_session_id", "started_at", "ended_at", "end_reason",
-    "message_count", "tool_call_count", "input_tokens", "output_tokens",
+    "message_count", "tool_interaction_count", "input_tokens", "output_tokens",
     "reasoning_tokens", "estimated_cost_usd", "actual_cost_usd", "title",
-    "api_call_count",
+    "source_session_api_interaction_count",
 ]
 
 MESSAGE_FIELDS = [
@@ -133,8 +133,8 @@ class HermesAdapter:
     def load_source(self, source_id: str) -> dict[str, Any]:
         return self.reader.load_source(source_id)
 
-    def normalize_eval_units(self, raw_source: dict[str, Any]) -> list[dict[str, Any]]:
+    def normalize_turn_cases(self, raw_source: dict[str, Any]) -> list[dict[str, Any]]:
         return normalize_session(raw_source["session"], raw_source["messages"])
 
-    def normalize_incident_examples(self, raw_source: dict[str, Any]) -> list[dict[str, Any]]:
-        return normalize_incident_examples(raw_source["session"], raw_source["messages"])
+    def build_tool_outcome_cases(self, raw_source: dict[str, Any]) -> list[dict[str, Any]]:
+        return build_tool_outcome_cases(raw_source["session"], raw_source["messages"])

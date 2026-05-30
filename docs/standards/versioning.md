@@ -56,7 +56,7 @@ Treat these as published package behavior once released or documented for users:
 - `agent-health` command names, options, exit behavior, stdout/stderr shapes, and JSON/result fields;
 - Python package/module imports that users may reasonably call directly;
 - sidecar SQLite layout, table names, persisted field names, and migration behavior;
-- judge prompt/output contracts including statuses, anomaly fields, evaluator-error records, and token/call accounting fields;
+- judge prompt/output contracts including statuses, finding fields, evaluator-error records, and token/call accounting fields;
 - configuration keys, environment behavior, default paths, and Hermes-home resolution;
 - package metadata and console script entry points.
 

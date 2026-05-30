@@ -25,9 +25,9 @@ def _severity(count: int | float, threshold: int | float) -> str | None:
 
 
 def _event_error(event: dict[str, Any]) -> bool:
-    if bool(event.get("result_error")):
+    if bool(event.get("output_error")):
         return True
-    preview = str(event.get("result_preview") or "")
+    preview = str(event.get("output_preview") or "")
     lower = preview.lower()
     try:
         parsed = json.loads(preview)
@@ -65,25 +65,26 @@ def _event_error(event: dict[str, Any]) -> bool:
 
 def _signal(name: str, value: Any, severity: str | None = None, evidence: str | None = None) -> dict[str, str | None]:
     return {
-        "signal_name": name,
+        "signal_type": name,
         "signal_value": str(value),
+        "score": None,
         "severity": severity,
-        "evidence": evidence,
+        "evidence_text": evidence,
     }
 
 
-def extract_deterministic_signals(
+def extract_case_signals(
     unit: dict[str, Any],
     thresholds: dict[str, int | float] | None = None,
 ) -> list[dict[str, str | None]]:
     th = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
-    events = unit.get("trace_events") or []
+    events = unit.get("case_events") or []
     signals: list[dict[str, str | None]] = []
 
-    tool_call_count = int(unit.get("tool_call_count") or len(events) or 0)
-    api_call_count = int(unit.get("api_call_count") or 0)
-    signals.append(_signal("tool_call_count", tool_call_count, _severity(tool_call_count, th["prolonged_tool_calls"]), f"{tool_call_count} tool events in eval unit"))
-    signals.append(_signal("api_call_count", api_call_count, _severity(api_call_count, th["prolonged_api_calls"]), f"{api_call_count} API calls recorded on source session"))
+    tool_interaction_count = int(unit.get("tool_interaction_count") or len(events) or 0)
+    source_session_api_interaction_count = int(unit.get("source_session_api_interaction_count") or 0)
+    signals.append(_signal("tool_interaction_count", tool_interaction_count, _severity(tool_interaction_count, th["prolonged_tool_calls"]), f"{tool_interaction_count} tool events in turn case"))
+    signals.append(_signal("source_session_api_interaction_count", source_session_api_interaction_count, _severity(source_session_api_interaction_count, th["prolonged_api_calls"]), f"{source_session_api_interaction_count} API calls recorded on source session"))
 
     started = unit.get("started_at")
     ended = unit.get("ended_at")
@@ -94,20 +95,20 @@ def extract_deterministic_signals(
     error_count = sum(1 for e in events if _event_error(e))
     signals.append(_signal("tool_error_count", error_count, "medium" if error_count else None, f"{error_count} tool events looked like errors"))
 
-    repeated_counts = Counter((e.get("tool_name"), e.get("args_hash"), e.get("args_preview")) for e in events if e.get("tool_name"))
+    repeated_counts = Counter((e.get("tool_name"), e.get("input_hash"), e.get("input_preview")) for e in events if e.get("tool_name"))
     same_tool_repeat_count = max(repeated_counts.values(), default=0)
     signals.append(_signal(
         "same_tool_repeat_count",
         same_tool_repeat_count,
         _severity(same_tool_repeat_count, th["repeated_same_tool_same_args"]),
-        "maximum repeats of the same tool with the same args hash/preview",
+        "maximum repeats of the same tool with the same input hash/preview",
     ))
 
-    reaction = classify_reaction(unit.get("next_user_reaction_text"), unit.get("user_request"))
-    signals.append(_signal("reaction", reaction, "medium" if reaction in {"correction", "complaint", "repeated_request"} else None, unit.get("next_user_reaction_text")))
+    reaction = classify_reaction(unit.get("next_request_text"), unit.get("request_text"))
+    signals.append(_signal("reaction", reaction, "medium" if reaction in {"correction", "complaint", "repeated_request"} else None, unit.get("next_request_text")))
 
-    assistant_response = str(unit.get("assistant_response") or "").lower()
-    claimed = any(p in assistant_response for p in ["created", "done", "completed", "sent", "uploaded", "fixed", "i have"])
+    response_text = str(unit.get("response_text") or "").lower()
+    claimed = any(p in response_text for p in ["created", "done", "completed", "sent", "uploaded", "fixed", "i have"])
     signals.append(_signal("assistant_claimed_completion", str(claimed).lower(), None, None))
 
     return signals

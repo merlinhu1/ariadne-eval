@@ -14,7 +14,7 @@ judge:
   model: main
   temperature: 0
   max_retries: 2
-  prompt_version: instruction_health_v1
+  prompt_version: turn_case_review_v1
   judgement_threshold: strict
 """
 

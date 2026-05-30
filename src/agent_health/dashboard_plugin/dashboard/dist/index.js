@@ -139,8 +139,8 @@
   }
 
   const FEEDBACK_LABELS = {
-    incident: "Incident",
-    not_incident: "Not incident",
+    problem: "Problem",
+    ok: "OK",
     unsure: "Unsure",
   };
 
@@ -165,7 +165,7 @@
       cooldown_minutes: Number(source.cooldown_minutes || 120),
       judgement_threshold: source.judgement_threshold || "strict",
       max_judge_calls: Number(source.max_judge_calls || 5),
-      max_judge_total_tokens: source.max_judge_total_tokens === null || source.max_judge_total_tokens === undefined ? "" : Number(source.max_judge_total_tokens),
+      max_review_total_tokens: source.max_review_total_tokens === null || source.max_review_total_tokens === undefined ? "" : Number(source.max_review_total_tokens),
       max_tokens_per_call: Number(source.max_tokens_per_call || 1200),
     };
   }
@@ -183,7 +183,7 @@
       cooldown_minutes: Math.max(0, Number(form.cooldown_minutes || 0)),
       judgement_threshold: form.judgement_threshold,
       max_judge_calls: Math.max(0, Number(form.max_judge_calls || 0)),
-      max_judge_total_tokens: form.max_judge_total_tokens === "" ? null : Math.max(0, Number(form.max_judge_total_tokens || 0)),
+      max_review_total_tokens: form.max_review_total_tokens === "" ? null : Math.max(0, Number(form.max_review_total_tokens || 0)),
       max_tokens_per_call: Math.max(1, Number(form.max_tokens_per_call || 1)),
     };
   }
@@ -262,7 +262,7 @@
 
   function EvalTaskControls({ tasks, onAction }) {
     if (!tasks || !tasks.length) {
-      return h("div", { className: "ae-empty" }, "No recurring eval tasks configured.");
+      return h("div", { className: "ae-empty" }, "No recurring review jobs configured.");
     }
     return h("div", { className: "ae-task-list" }, tasks.slice(0, 6).map((task) =>
       h("div", { className: "ae-task-row", key: task.id },
@@ -279,9 +279,9 @@
   }
 
   function ConfigPanel({ config, tasks, loading, error, onClose, onRefresh, onTaskSaved, onTaskAction, onError }) {
-    const models = (config && config.incident_models) || [];
-    const promoted = config && config.promoted_incident_model;
-    const options = (config && config.eval_task_options) || {};
+    const models = (config && config.problem_reviewer_models) || [];
+    const promoted = config && config.promoted_problem_reviewer_model;
+    const options = (config && config.review_job_options) || {};
     const [selectedTaskId, setSelectedTaskId] = useState("");
     const [form, setForm] = useState(taskFormDefaults(null));
     const [selectedModelId, setSelectedModelId] = useState(promoted && promoted.id || "");
@@ -311,8 +311,8 @@
       }
       setSaving(true);
       const request = selectedTaskId
-        ? patchPluginJSON(`/api/plugins/ariadne-eval/eval-tasks/${encodeURIComponent(selectedTaskId)}`, payload)
-        : postPluginJSON("/api/plugins/ariadne-eval/eval-tasks", payload);
+        ? patchPluginJSON(`/api/plugins/ariadne-eval/review-jobs/${encodeURIComponent(selectedTaskId)}`, payload)
+        : postPluginJSON("/api/plugins/ariadne-eval/review-jobs", payload);
       request
         .then((task) => {
           setSelectedTaskId(task && task.id || selectedTaskId);
@@ -324,11 +324,11 @@
 
     function promoteModel() {
       if (!selectedModelId) {
-        onError("Choose a trained incident model to promote.");
+        onError("Choose a trained problem model to promote.");
         return;
       }
       setModelBusy(true);
-      postPluginJSON(`/api/plugins/ariadne-eval/incident-models/${encodeURIComponent(selectedModelId)}/promote`, {})
+      postPluginJSON(`/api/plugins/ariadne-eval/tool-outcome-reviewer-models/${encodeURIComponent(selectedModelId)}/promote`, {})
         .then(onRefresh)
         .catch((err) => onError(err && err.message ? err.message : String(err)))
         .finally(() => setModelBusy(false));
@@ -336,7 +336,7 @@
 
     function retrainModel() {
       setModelBusy(true);
-      postPluginJSON("/api/plugins/ariadne-eval/incident-models/retrain", {})
+      postPluginJSON("/api/plugins/ariadne-eval/tool-outcome-reviewer-models/retrain", {})
         .then(onRefresh)
         .catch((err) => onError(err && err.message ? err.message : String(err)))
         .finally(() => setModelBusy(false));
@@ -356,14 +356,14 @@
       error ? h("div", { className: "ae-error" }, error) : null,
       h("div", { className: "ae-config-grid" },
         h("div", { className: "ae-config-card" },
-          h("h3", null, "Incident ML model"),
+          h("h3", null, "Problem ML model"),
           models.length ? h(Field, { label: "Trained model" },
             h("select", { value: selectedModelId, onChange: (ev) => setSelectedModelId(ev.target.value) },
               models.map((model) => h("option", { key: model.id, value: model.id },
                 `${model.model_name} ${model.model_version}${model.promoted ? " (promoted)" : ""}`
               ))
             )
-          ) : h("div", { className: "ae-empty" }, "No trained incident models recorded."),
+          ) : h("div", { className: "ae-empty" }, "No trained problem models recorded."),
           promoted ? h("p", { className: "ae-muted" }, `Current model: ${promoted.model_name} ${promoted.model_version}, ${formatCount(promoted.training_record_count)} training rows.`) : h("p", { className: "ae-muted" }, "No model is promoted yet."),
           h("div", { className: "ae-config-actions" },
             h("button", { type: "button", onClick: promoteModel, disabled: modelBusy || !models.length }, "Promote"),
@@ -377,7 +377,7 @@
         ),
         h("form", { className: "ae-config-card ae-config-task", onSubmit: saveTask },
           h("div", { className: "ae-panel-title-row" },
-            h("h3", null, "Recurring eval task"),
+            h("h3", null, "Recurring review job"),
             h("button", { type: "button", onClick: () => { setSelectedTaskId(""); setForm(taskFormDefaults(null)); } }, "New task")
           ),
           h(Field, { label: "Select task" },
@@ -400,7 +400,7 @@
               (options.judgement_thresholds || ["strict", "balanced", "relaxed"]).map((threshold) => h("option", { key: threshold, value: threshold }, displayLabel(threshold)))
             )),
             h(Field, { label: "Max judge calls" }, h("input", { type: "number", min: "0", value: form.max_judge_calls, onChange: (ev) => updateForm("max_judge_calls", ev.target.value) })),
-            h(Field, { label: "Max judge total tokens" }, h("input", { type: "number", min: "0", placeholder: "No cap", value: form.max_judge_total_tokens, onChange: (ev) => updateForm("max_judge_total_tokens", ev.target.value) })),
+            h(Field, { label: "Max judge total tokens" }, h("input", { type: "number", min: "0", placeholder: "No cap", value: form.max_review_total_tokens, onChange: (ev) => updateForm("max_review_total_tokens", ev.target.value) })),
             h(Field, { label: "Max tokens per call" }, h("input", { type: "number", min: "1", value: form.max_tokens_per_call, onChange: (ev) => updateForm("max_tokens_per_call", ev.target.value) }))
           ),
           h("div", { className: "ae-config-checks" },
@@ -440,7 +440,7 @@
     ));
   }
 
-  function IncidentLabelChips({ rows }) {
+  function ToolOutcomeReviewChips({ rows }) {
     return h(CountMap, {
       values: countByLabel(rows, (row) => row.label || row.prediction_label),
       empty: "none",
@@ -461,15 +461,15 @@
 
   function Timeline({ timeline }) {
     const rows = timeline || [];
-    const peak = rows.reduce((max, row) => Math.max(max, Number(row.anomalies || 0)), 1);
+    const peak = rows.reduce((max, row) => Math.max(max, Number(row.findings || 0)), 1);
     if (!rows.length) return h("div", { className: "ae-empty" }, "No timeline data in this window.");
     return h("div", { className: "ae-timeline" }, rows.slice(-36).map((row) => {
-      const total = Number(row.anomalies || 0);
+      const total = Number(row.findings || 0);
       const height = Math.max(8, (total / peak) * 84);
       const label = formatLocalTime(row.bucket_start);
-      return h("div", { className: "ae-timeline-col", key: row.bucket_start, title: `${label}: ${formatCount(row.anomalies)} anomalies` },
+      return h("div", { className: "ae-timeline-col", key: row.bucket_start, title: `${label}: ${formatCount(row.findings)} findings` },
         h("div", { className: "ae-timeline-bar", style: { height: `${height}px` } },
-          h("span", { className: "ae-timeline-anomalies", style: { height: `${total ? (Number(row.anomalies || 0) / total) * 100 : 0}%` } })
+          h("span", { className: "ae-timeline-findings", style: { height: `${total ? (Number(row.findings || 0) / total) * 100 : 0}%` } })
         )
       );
     }));
@@ -503,7 +503,7 @@
 
   function FeedbackButtons({ targetType, targetId, evalUnitId, currentLabel, labels, commentPrefix, reasonCode }) {
     const [status, setStatus] = useState("");
-    const options = labels || ["incident", "not_incident", "unsure"];
+    const options = labels || ["problem", "ok", "unsure"];
     if (!targetType || !targetId) return null;
 
     function submitFeedback(label) {
@@ -511,7 +511,7 @@
       postPluginJSON(`/api/plugins/ariadne-eval/feedback`, {
         target_type: targetType,
         target_id: targetId,
-        eval_unit_id: evalUnitId,
+        turn_case_id: evalUnitId,
         label,
         reason_code: reasonCode,
         correction: label !== currentLabel,
@@ -532,27 +532,27 @@
   function ReviewButtons({ row }) {
     if (!row || !row.id) return null;
     return h(FeedbackButtons, {
-      targetType: "incident_example",
+      targetType: "tool_outcome_case",
       targetId: row.id,
-      evalUnitId: row.eval_unit_id,
+      evalUnitId: row.turn_case_id,
       currentLabel: row.label || row.prediction_label,
-      labels: ["incident", "not_incident", "unsure"],
-      commentPrefix: "Marked incident evidence from dashboard",
+      labels: ["problem", "ok", "unsure"],
+      commentPrefix: "Marked problem evidence from dashboard",
       reasonCode: row.reason_code,
     });
   }
 
   function FrictionSummary({ friction, anchors }) {
     const values = friction || {};
-    const hasData = values.count || values.max_request_friction_score || values.avg_request_friction_score;
+    const hasData = values.count || values.max_friction_score || values.avg_friction_score;
     return h("section", { className: "ae-panel ae-wide ae-friction-panel" },
       h("div", { className: "ae-panel-title-row" },
         h("h2", null, "Request friction"),
         h("span", { className: "ae-muted" }, hasData ? "Normalized 0.00 to 1.00" : "No judged request friction yet")
       ),
       h("div", { className: "ae-friction-stats" },
-        h("div", null, h("label", null, "Average"), h("strong", null, formatScore(values.avg_request_friction_score))),
-        h("div", null, h("label", null, "Max"), h("strong", null, formatScore(values.max_request_friction_score))),
+        h("div", null, h("label", null, "Average"), h("strong", null, formatScore(values.avg_friction_score))),
+        h("div", null, h("label", null, "Max"), h("strong", null, formatScore(values.max_friction_score))),
         h("div", null, h("label", null, "Count"), h("strong", null, formatCount(values.count)))
       ),
       h("div", { className: "ae-anchor-legend" }, (anchors || []).map((anchor) =>
@@ -567,26 +567,26 @@
     function openDetails(ev) {
       ev.preventDefault();
       ev.stopPropagation();
-      if (onOpenSession) onOpenSession(request.source_session_id, { unitId: request.eval_unit_id, tab: "turns" });
+      if (onOpenSession) onOpenSession(request.source_session_id, { unitId: request.turn_case_id, tab: "turns" });
     }
     return h("div", { className: "ae-request-card" },
       h("div", { className: "ae-request-head" },
-        h("strong", null, clip(request.user_request, 220)),
-        h("span", { className: `ae-friction-band ae-band-${request.friction_band || "clean"}` }, `${formatScore(request.request_friction_score)} ${displayLabel(request.friction_band)}`)
+        h("strong", null, clip(request.request_text, 220)),
+        h("span", { className: `ae-friction-band ae-band-${request.friction_band || "clean"}` }, `${formatScore(request.friction_score)} ${displayLabel(request.friction_band)}`)
       ),
       h("div", { className: "ae-evidence-meta" },
         h("span", { className: "ae-copyable-id", title: request.source_session_id }, `session ${request.source_session_id || "unknown"}`),
-        h("span", null, `status ${displayLabel(request.health_status)}`),
-        h("span", null, `${formatCount(request.anomaly_count)} anomalies`),
-        h("span", null, `${formatCount(request.incident_example_count)} incident examples`),
+        h("span", null, `status ${displayLabel(request.outcome_status)}`),
+        h("span", null, `${formatCount(request.finding_count)} findings`),
+        h("span", null, `${formatCount(request.tool_outcome_case_count)} tool outcome cases`),
         request.started_at ? h(LocalTime, { value: request.started_at }) : null
       ),
-      request.primary_reason ? h("p", null, clip(request.primary_reason, 220)) : null,
+      request.summary_reason ? h("p", null, clip(request.summary_reason, 220)) : null,
       h(FeedbackButtons, {
-        targetType: "eval_unit",
-        targetId: request.eval_unit_id,
-        evalUnitId: request.eval_unit_id,
-        currentLabel: request.health_status,
+        targetType: "turn_case",
+        targetId: request.turn_case_id,
+        evalUnitId: request.turn_case_id,
+        currentLabel: request.outcome_status,
         labels: ["succeed", "failed", "mishandled", "prolonged"],
         commentPrefix: "Marked request from dashboard",
       }),
@@ -596,22 +596,22 @@
 
   function RequestsNeedingAttention({ requests, onOpenSession }) {
     const rows = (requests || []).slice().sort((a, b) =>
-      Number(b.request_friction_score || 0) - Number(a.request_friction_score || 0)
-      || Number(b.anomaly_count || 0) - Number(a.anomaly_count || 0)
-      || Number(b.incident_example_count || 0) - Number(a.incident_example_count || 0)
+      Number(b.friction_score || 0) - Number(a.friction_score || 0)
+      || Number(b.finding_count || 0) - Number(a.finding_count || 0)
+      || Number(b.tool_outcome_case_count || 0) - Number(a.tool_outcome_case_count || 0)
     );
     if (!rows.length) return h("div", { className: "ae-empty" }, "No judged requests in this window.");
     return h("div", { className: "ae-request-list" }, rows.slice(0, 12).map((request) =>
-      h(RequestCard, { key: request.eval_unit_id, request, onOpenSession })
+      h(RequestCard, { key: request.turn_case_id, request, onOpenSession })
     ));
   }
 
   function openRowFromEvidence(openSession, sessionId, row, type) {
     if (!openSession) return;
     const hasEvent = Boolean(row && row.related_event_id);
-    const tab = hasEvent ? "tools" : (type === "anomalies" || row.anomaly_type ? "judge" : "tools");
+    const tab = hasEvent ? "tools" : (type === "findings" || row.finding_type ? "judge" : "tools");
     openSession(sessionId, {
-      unitId: row && row.eval_unit_id,
+      unitId: row && row.turn_case_id,
       eventId: row && row.related_event_id,
       tab,
     });
@@ -620,10 +620,10 @@
   function EvidenceList({ rows, type, sourceSessionId, onOpenSession }) {
     if (!rows || !rows.length) return h("div", { className: "ae-empty ae-compact-empty" }, `No ${type}.`);
     return h("div", { className: "ae-evidence-list" }, rows.slice(0, 8).map((row, idx) => {
-      const name = row.anomaly_type || row.label || row.prediction_label || "unknown";
-      const detailText = row.tool_result || row.result_preview || row.evidence || row.primary_reason || row.user_request_excerpt || row.user_request;
+      const name = row.finding_type || row.label || row.prediction_label || "unknown";
+      const detailText = row.tool_result || row.output_preview || row.evidence || row.summary_reason || row.request_text_excerpt || row.request_text;
       const sessionId = row.source_session_id || sourceSessionId;
-      const key = `${row.eval_unit_id}:${name}:${idx}`;
+      const key = `${row.turn_case_id}:${name}:${idx}`;
       const onActivate = (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
@@ -645,15 +645,15 @@
         ),
         h("div", { className: "ae-evidence-meta" },
           h(LocalTime, { value: row.started_at || row.result_timestamp }),
-          h("span", null, `turn ${row.source_turn_index || "?"}`),
-          h("span", { className: "ae-copyable-id", title: row.eval_unit_id || "" }, `unit ${row.eval_unit_id || "?"}`),
+          h("span", null, `turn ${row.turn_index || "?"}`),
+          h("span", { className: "ae-copyable-id", title: row.turn_case_id || "" }, `unit ${row.turn_case_id || "?"}`),
           row.related_event_id ? h("span", { className: "ae-copyable-id", title: row.related_event_id }, "linked event") : null
         ),
         h(ExpandedText, { value: detailText, summaryLimit: 260 }),
         h(ReviewButtons, { row }),
         row.label_source ? h("small", null, `label source: ${row.label_source}`) : null,
-        row.evidence && row.result_preview ? h("small", null, row.evidence) : null,
-        h("small", null, clip(row.user_request_excerpt || row.user_request, 180))
+        row.evidence && row.output_preview ? h("small", null, row.evidence) : null,
+        h("small", null, clip(row.request_text_excerpt || row.request_text, 180))
       );
     }));
   }
@@ -715,30 +715,30 @@
               },
             }, "Copy ID"),
             h("span", { className: "ae-card-fold" }, collapsed ? "Expand" : "Fold"),
-            h("div", { className: "ae-session-attention", title: "Session evidence count" }, `${formatCount(Number(row.incident_example_count || 0) + Number(row.anomaly_count || 0))} signals`)
+            h("div", { className: "ae-session-attention", title: "Session evidence count" }, `${formatCount(Number(row.tool_outcome_case_count || 0) + Number(row.finding_count || 0))} signals`)
           )
         ),
         h("div", { className: "ae-session-metrics" },
-          h("span", null, h("b", null, formatCount(row.eval_units)), " units"),
-          h("span", null, h("b", null, formatScore(row.max_request_friction_score)), " max friction"),
-          h("span", null, h("b", null, formatScore(row.avg_request_friction_score)), " avg friction"),
-          h("span", null, h("b", null, formatCount(row.incident_example_count)), " incident examples"),
-          h("span", null, h("b", null, formatCount(row.anomaly_count)), " anomalies")
+          h("span", null, h("b", null, formatCount(row.turn_cases)), " cases"),
+          h("span", null, h("b", null, formatScore(row.max_friction_score)), " max friction"),
+          h("span", null, h("b", null, formatScore(row.avg_friction_score)), " avg friction"),
+          h("span", null, h("b", null, formatCount(row.tool_outcome_case_count)), " tool outcome cases"),
+          h("span", null, h("b", null, formatCount(row.finding_count)), " findings")
         )
       ),
       !collapsed ? h("div", { className: "ae-session-card-body" },
         h("div", { className: "ae-session-facets" },
-          h("div", null, h("label", null, "Anomalies"), h(CountMap, { values: row.anomaly_types, empty: "none" })),
-          h("div", null, h("label", null, "Incident examples"), h(IncidentLabelChips, { rows: row.incident_examples }))
+          h("div", null, h("label", null, "Findings"), h(CountMap, { values: row.finding_types, empty: "none" })),
+          h("div", null, h("label", null, "Tool outcome cases"), h(ToolOutcomeReviewChips, { rows: row.tool_outcome_cases }))
         ),
         h("div", { className: "ae-evidence-sections" },
           h("div", { className: "ae-evidence-section" },
-            h("label", null, "Anomaly evidence"),
-            h(EvidenceList, { rows: row.anomalies, type: "anomalies", sourceSessionId: row.source_session_id, onOpenSession: row.onOpenSession })
+            h("label", null, "Finding evidence"),
+            h(EvidenceList, { rows: row.findings, type: "findings", sourceSessionId: row.source_session_id, onOpenSession: row.onOpenSession })
           ),
           h("div", { className: "ae-evidence-section" },
-            h("label", null, "Incident evidence"),
-            h(EvidenceList, { rows: row.incident_examples, type: "incidents", sourceSessionId: row.source_session_id, onOpenSession: row.onOpenSession })
+            h("label", null, "Problem evidence"),
+            h(EvidenceList, { rows: row.tool_outcome_cases, type: "tool_outcome_cases", sourceSessionId: row.source_session_id, onOpenSession: row.onOpenSession })
           )
         )
       ) : null
@@ -800,19 +800,19 @@
   }
 
   function selectedDetail(drawerData, selectedUnitId) {
-    const rows = (drawerData && drawerData.units) || [];
+    const rows = (drawerData && drawerData.cases) || [];
     return rows.find((detail) => detail.unit && detail.unit.id === selectedUnitId) || rows[0] || null;
   }
 
   function SessionOverviewTab({ data, onJump }) {
-    const units = data.units || [];
-    const latest = units[0] && units[0].unit;
+    const cases = data.cases || [];
+    const latest = cases[0] && cases[0].unit;
     return h("div", { className: "ae-section" },
       h("h3", null, "Why this session is hot"),
         h("div", { className: "ae-drawer-summary-grid" },
         h("div", null, h("label", null, "Statuses"), h(CountMap, { values: data.statuses, empty: "none" })),
-        h("div", null, h("label", null, "Anomalies"), h(CountMap, { values: data.anomaly_types, empty: "none" })),
-        h("div", null, h("label", null, "Incident examples"), h(IncidentLabelChips, { rows: data.incident_examples })),
+        h("div", null, h("label", null, "Findings"), h(CountMap, { values: data.finding_types, empty: "none" })),
+        h("div", null, h("label", null, "Tool outcome cases"), h(ToolOutcomeReviewChips, { rows: data.tool_outcome_cases })),
         h("div", null, h("label", null, "Severities"), h(CountMap, { values: data.severities, empty: "none" }))
       ),
       h("div", { className: "ae-drawer-actions" },
@@ -821,18 +821,18 @@
         latest ? h("button", { type: "button", onClick: () => onJump(latest.id, null, "turns") }, "Open latest unit") : null
       ),
       h("h4", null, "Top unit evidence"),
-      h("div", { className: "ae-unit-list" }, units.slice(0, 8).map((detail) => {
+      h("div", { className: "ae-unit-list" }, cases.slice(0, 8).map((detail) => {
         const row = detail.unit || {};
         const evalRow = detail.latest_eval || {};
-        const firstEvent = (detail.trace_events || []).find((event) => event.result_error) || (detail.trace_events || [])[0];
+        const firstEvent = (detail.case_events || []).find((event) => event.output_error) || (detail.case_events || [])[0];
         return h("button", {
           type: "button",
           className: "ae-turn-row",
           key: row.id,
           onClick: () => onJump(row.id, firstEvent && firstEvent.id, firstEvent ? "tools" : "judge"),
         },
-          h("strong", null, `Turn ${row.source_turn_index || "?"} · ${evalRow.health_status || "not judged"}`),
-          h("span", null, clip(evalRow.primary_reason || row.user_request, 180))
+          h("strong", null, `Turn ${row.turn_index || "?"} · ${evalRow.outcome_status || "not judged"}`),
+          h("span", null, clip(evalRow.summary_reason || row.request_text, 180))
         );
       }))
     );
@@ -843,19 +843,19 @@
     const evalRow = (detail && detail.latest_eval) || {};
     return h("div", { className: "ae-turn-detail" },
       h("div", { className: "ae-drawer-summary-grid" },
-        h("div", null, h("label", null, "Signals"), h(CountMap, { values: Object.fromEntries((detail.signals || []).map((signal) => [signal.signal_name, 1])), empty: "none" })),
-        h("div", null, h("label", null, "Tool errors"), h(CountMap, { values: Object.fromEntries((detail.trace_events || []).filter((event) => event.result_error).map((event) => [event.tool_name || "unknown", 1])), empty: "none" }))
+        h("div", null, h("label", null, "Signals"), h(CountMap, { values: Object.fromEntries((detail.signals || []).map((signal) => [signal.signal_type, 1])), empty: "none" })),
+        h("div", null, h("label", null, "Tool errors"), h(CountMap, { values: Object.fromEntries((detail.case_events || []).filter((event) => event.output_error).map((event) => [event.tool_name || "unknown", 1])), empty: "none" }))
       ),
-      h("h4", null, "User request"), h("pre", { className: "ae-pre" }, row.user_request || "—"),
-      h("h4", null, "Assistant response"), h("pre", { className: "ae-pre" }, row.assistant_response || "—"),
-      h("h4", null, "Previous context"), h("pre", { className: "ae-pre" }, row.previous_context_summary || "—"),
-      h("h4", null, "Next user reaction"), h("pre", { className: "ae-pre" }, row.next_user_reaction_text || "—"),
-      h("h4", null, "Latest judge"), h("pre", { className: "ae-pre" }, `${evalRow.health_status || "not judged"}: ${evalRow.primary_reason || "—"}`),
+      h("h4", null, "User request"), h("pre", { className: "ae-pre" }, row.request_text || "—"),
+      h("h4", null, "Assistant response"), h("pre", { className: "ae-pre" }, row.response_text || "—"),
+      h("h4", null, "Previous context"), h("pre", { className: "ae-pre" }, row.prior_context_summary || "—"),
+      h("h4", null, "Next user reaction"), h("pre", { className: "ae-pre" }, row.next_request_text || "—"),
+      h("h4", null, "Latest judge"), h("pre", { className: "ae-pre" }, `${evalRow.outcome_status || "not judged"}: ${evalRow.summary_reason || "—"}`),
       h(FeedbackButtons, {
-        targetType: "eval_unit",
+        targetType: "turn_case",
         targetId: row.id,
         evalUnitId: row.id,
-        currentLabel: evalRow.health_status,
+        currentLabel: evalRow.outcome_status,
         labels: ["succeed", "failed", "mishandled", "prolonged"],
         commentPrefix: "Marked request turn from dashboard",
       })
@@ -863,17 +863,17 @@
   }
 
   function SessionTurnsTab({ data, selectedUnitId, setSelectedUnitId }) {
-    const rows = data.units || [];
+    const rows = data.cases || [];
     return h("div", { className: "ae-section" }, rows.map((detail) => {
       const row = detail.unit || {};
       const evalRow = detail.latest_eval || {};
       const open = row.id === selectedUnitId;
       return h("div", { className: `ae-turn-row ${open ? "ae-turn-selected" : ""}`, key: row.id },
         h("button", { type: "button", onClick: () => setSelectedUnitId(row.id) },
-          h("strong", null, `Turn ${row.source_turn_index || "?"} · ${evalRow.health_status || "not judged"} · ${evalRow.confidence || "unknown"}`),
-          h("span", null, h(LocalTime, { value: row.started_at }), " · ", formatCount(row.tool_call_count), " tools · ", formatCount(row.api_call_count), " APIs")
+          h("strong", null, `Turn ${row.turn_index || "?"} · ${evalRow.outcome_status || "not judged"} · ${evalRow.confidence || "unknown"}`),
+          h("span", null, h(LocalTime, { value: row.started_at }), " · ", formatCount(row.tool_interaction_count), " tools · ", formatCount(row.source_session_api_interaction_count), " APIs")
         ),
-        h("p", null, clip(row.user_request, 240)),
+        h("p", null, clip(row.request_text, 240)),
         open ? h(TurnDetail, { detail }) : null
       );
     }));
@@ -882,53 +882,53 @@
   function relatedEventIds(detail) {
     const ids = new Set();
     const evalRow = detail.latest_eval || {};
-    (evalRow.anomalies || []).forEach((anomaly) => { if (anomaly.related_event_id) ids.add(anomaly.related_event_id); });
+    (evalRow.findings || []).forEach((finding) => { if (finding.related_event_id) ids.add(finding.related_event_id); });
     return ids;
   }
 
   function TraceEventRow({ event, detail, selectedEventId }) {
     const linked = relatedEventIds(detail).has(event.id);
-    const defaultOpen = Boolean(event.result_error) || event.id === selectedEventId;
+    const defaultOpen = Boolean(event.output_error) || event.id === selectedEventId;
     return h("details", {
-      className: `ae-trace-event ${event.result_error ? "ae-trace-event-error" : ""} ${linked ? "ae-trace-event-linked" : ""} ${event.id === selectedEventId ? "ae-trace-event-selected" : ""}`,
+      className: `ae-trace-event ${event.output_error ? "ae-trace-event-error" : ""} ${linked ? "ae-trace-event-linked" : ""} ${event.id === selectedEventId ? "ae-trace-event-selected" : ""}`,
       id: `ae-event-${String(event.id || "").replace(/[^a-zA-Z0-9_-]/g, "-")}`,
       open: defaultOpen,
     },
       h("summary", null,
         h("strong", null, event.tool_name || event.event_type || "trace event"),
-        h("span", null, `turn ${(detail.unit && detail.unit.source_turn_index) || "?"}`),
-        h("span", null, event.result_error ? "status: error" : "status: done"),
+        h("span", null, `turn ${(detail.unit && detail.unit.turn_index) || "?"}`),
+        h("span", null, event.output_error ? "status: error" : "status: done"),
         event.duration_ms ? h("span", null, `${formatCount(event.duration_ms)} ms`) : null
       ),
       h("div", { className: "ae-trace-body" },
         h("div", { className: "ae-drawer-actions" },
           h(CopyButton, { value: event.id, label: "Copy event ID", title: "Copy event ID" }),
-          h(CopyButton, { value: event.args_preview, label: "Copy args", title: "Copy args preview" }),
-          h(CopyButton, { value: event.result_preview, label: "Copy result", title: "Copy result preview" }),
-          h(CopyButton, { value: safePrettyJson(event.raw_payload_json), label: "Copy raw", title: "Copy raw payload" })
+          h(CopyButton, { value: event.input_preview, label: "Copy args", title: "Copy args preview" }),
+          h(CopyButton, { value: event.output_preview, label: "Copy result", title: "Copy result preview" }),
+          h(CopyButton, { value: safePrettyJson(event.source_payload_json), label: "Copy raw", title: "Copy raw payload" })
         ),
         h(FeedbackButtons, {
-          targetType: "trace_event",
+          targetType: "case_event",
           targetId: event.id,
           evalUnitId: detail.unit && detail.unit.id,
-          currentLabel: event.result_error ? "incident" : "not_incident",
-          labels: ["incident", "not_incident", "unsure"],
+          currentLabel: event.output_error ? "problem" : "ok",
+          labels: ["problem", "ok", "unsure"],
           commentPrefix: "Marked tool call from dashboard",
         }),
-        h("h4", null, "Args"), h("pre", { className: "ae-pre" }, event.args_preview || "—"),
-        h("h4", null, "Result"), h("pre", { className: "ae-pre" }, event.result_preview || "—"),
-        event.result_error ? h("p", { className: "ae-error-inline" }, "Tool call returned an error.") : null,
-        h("h4", null, "Raw payload"), h("pre", { className: "ae-pre" }, safePrettyJson(event.raw_payload_json))
+        h("h4", null, "Args"), h("pre", { className: "ae-pre" }, event.input_preview || "—"),
+        h("h4", null, "Result"), h("pre", { className: "ae-pre" }, event.output_preview || "—"),
+        event.output_error ? h("p", { className: "ae-error-inline" }, "Tool call returned an error.") : null,
+        h("h4", null, "Raw payload"), h("pre", { className: "ae-pre" }, safePrettyJson(event.source_payload_json))
       )
     );
   }
 
   function ToolCallsTab({ data, selectedUnitId, selectedEventId, setSelectedUnitId }) {
     const [errorsOnly, setErrorsOnly] = useState(false);
-    const details = data.units || [];
+    const details = data.cases || [];
     const rows = [];
-    details.forEach((detail) => (detail.trace_events || []).forEach((event) => rows.push({ detail, event })));
-    const filtered = errorsOnly ? rows.filter(({ event }) => event.result_error) : rows;
+    details.forEach((detail) => (detail.case_events || []).forEach((event) => rows.push({ detail, event })));
+    const filtered = errorsOnly ? rows.filter(({ event }) => event.output_error) : rows;
     return h("div", { className: "ae-section" },
       h("div", { className: "ae-filter-row" },
         h("label", null, h("input", { type: "checkbox", checked: errorsOnly, onChange: (ev) => setErrorsOnly(ev.target.checked) }), " Errors only"),
@@ -943,31 +943,31 @@
   }
 
   function JudgeEvalTab({ data, selectedUnitId, setSelectedUnitId }) {
-    return h("div", { className: "ae-section" }, (data.units || []).map((detail) => {
+    return h("div", { className: "ae-section" }, (data.cases || []).map((detail) => {
       const row = detail.unit || {};
       const evalRow = detail.latest_eval || {};
       const selected = row.id === selectedUnitId;
       return h("details", { className: `ae-judge-row ${selected ? "ae-turn-selected" : ""}`, key: row.id, open: selected },
         h("summary", { onClick: () => setSelectedUnitId(row.id) },
-          h("strong", null, `Turn ${row.source_turn_index || "?"} · ${evalRow.health_status || "not judged"}`),
-          h("span", null, evalRow.primary_reason || "No judge result")
+          h("strong", null, `Turn ${row.turn_index || "?"} · ${evalRow.outcome_status || "not judged"}`),
+          h("span", null, evalRow.summary_reason || "No judge result")
         ),
         h("div", { className: "ae-drawer-summary-grid" },
           h("div", null, h("label", null, "Confidence"), h("strong", null, evalRow.confidence || "—")),
           h("div", null, h("label", null, "Judge"), h("strong", null, [evalRow.judge_provider, evalRow.judge_model].filter(Boolean).join(" / ") || "—")),
-          h("div", null, h("label", null, "Tokens"), h("strong", null, formatCount(evalRow.judge_total_tokens))),
+          h("div", null, h("label", null, "Tokens"), h("strong", null, formatCount(evalRow.review_total_tokens))),
           h("div", null, h("label", null, "Calls"), h("strong", null, formatCount(evalRow.judge_call_count)))
         ),
-        h("h4", null, "Anomalies"),
+        h("h4", null, "Findings"),
         evalRow.id ? h(FeedbackButtons, {
-          targetType: "llm_eval",
+          targetType: "case_review",
           targetId: evalRow.id,
           evalUnitId: row.id,
-          currentLabel: evalRow.health_status,
+          currentLabel: evalRow.outcome_status,
           labels: ["succeed", "failed", "mishandled", "prolonged"],
           commentPrefix: "Marked LLM judge result from dashboard",
         }) : null,
-        h(RawJsonBlock, { value: evalRow.anomalies || [], title: "Anomalies JSON" }),
+        h(RawJsonBlock, { value: evalRow.findings || [], title: "Findings JSON" }),
         h("h4", null, "Raw eval JSON"),
         h(RawJsonBlock, { value: evalRow.eval_json || evalRow, title: "Eval JSON" })
       );
@@ -976,7 +976,7 @@
 
   function RawTab({ data, selectedUnitId, selectedEventId }) {
     const detail = selectedDetail(data, selectedUnitId);
-    const event = detail && (detail.trace_events || []).find((row) => row.id === selectedEventId);
+    const event = detail && (detail.case_events || []).find((row) => row.id === selectedEventId);
     return h("div", { className: "ae-section" },
       h(RawJsonBlock, { value: data, title: "Session detail JSON" }),
       detail ? h(RawJsonBlock, { value: detail, title: "Selected unit JSON" }) : null,
@@ -1007,8 +1007,8 @@
       fetchPluginJSON(`/api/plugins/ariadne-eval/sessions/${encodeURIComponent(drawerSessionId)}?since=${encodeURIComponent(since)}&unit_limit=500`, { signal: abort.signal })
         .then((payload) => {
           setDrawerData(payload);
-          if (!selectedUnitId && payload && payload.units && payload.units[0] && payload.units[0].unit) {
-            setSelectedUnitId(payload.units[0].unit.id);
+          if (!selectedUnitId && payload && payload.cases && payload.cases[0] && payload.cases[0].unit) {
+            setSelectedUnitId(payload.cases[0].unit.id);
           }
         })
         .catch((err) => {
@@ -1054,10 +1054,10 @@
             h("div", { className: "ae-evidence-meta" },
               h("span", { className: "ae-copyable-id", title: drawerSessionId }, drawerSessionId),
               data.last_started_at ? h(LocalTime, { value: data.last_started_at }) : null,
-              h("span", null, `${formatCount(data.eval_units)} units`),
+              h("span", null, `${formatCount(data.turn_cases)} cases`),
               h("span", null, `${formatCount(data.evaluated_turns)} judged`),
-              h("span", null, `${formatCount(data.incident_example_count)} incident examples`),
-              h("span", null, `${formatCount(data.anomaly_count)} anomalies`)
+              h("span", null, `${formatCount(data.tool_outcome_case_count)} tool outcome cases`),
+              h("span", null, `${formatCount(data.finding_count)} findings`)
             )
           ),
           h("div", { className: "ae-drawer-actions" },
@@ -1106,7 +1106,7 @@
     }
 
     function loadTasks() {
-      fetchPluginJSON("/api/plugins/ariadne-eval/eval-tasks")
+      fetchPluginJSON("/api/plugins/ariadne-eval/review-jobs")
         .then((rows) => setTasks(rows || []))
         .catch(() => setTasks([]));
     }
@@ -1131,7 +1131,7 @@
     }
 
     function taskAction(taskId, action) {
-      postPluginJSON(`/api/plugins/ariadne-eval/eval-tasks/${encodeURIComponent(taskId)}/${action}`, {})
+      postPluginJSON(`/api/plugins/ariadne-eval/review-jobs/${encodeURIComponent(taskId)}/${action}`, {})
         .then(refreshTasksAndConfig)
         .catch((err) => {
           const message = err && err.message ? err.message : String(err);
@@ -1157,7 +1157,7 @@
         h("div", null,
           h("h1", null, "Ariadne Eval"),
           h("p", null, "Request-first friction and evidence visualization for local instruction-health data."),
-          h("p", { className: "ae-feedback-help" }, "Feedback is inline on requests, tool calls, incident evidence, and judge results; human corrections are recorded separately because deterministic rules and LLM judges can both be wrong.")
+          h("p", { className: "ae-feedback-help" }, "Feedback is inline on requests, tool calls, problem evidence, and judge results; human corrections are recorded separately because deterministic rules and LLM judges can both be wrong.")
         ),
         h("div", { className: "ae-controls" },
           h("label", null, "Window"),
@@ -1193,31 +1193,31 @@
         },
       }) : null,
       h("div", { className: "ae-stat-grid" },
-        h(StatCard, { label: "Eval units", value: totals.eval_units }),
+        h(StatCard, { label: "Turn cases", value: totals.turn_cases }),
         h(StatCard, { label: "Judged turns", value: totals.evaluated_turns, sub: `${formatCount(tokens.total_tokens)} judge tokens` }),
-        h(StatCard, { label: "Incident examples", value: (data && data.incident_examples && data.incident_examples.length) || 0 }),
-        h(StatCard, { label: "Judge anomalies", value: totals.anomalies })
+        h(StatCard, { label: "Tool outcome cases", value: (data && data.tool_outcome_cases && data.tool_outcome_cases.length) || 0 }),
+        h(StatCard, { label: "Judge findings", value: totals.findings })
       ),
       h("div", { className: "ae-grid" },
         h(FrictionSummary, { friction: data && data.friction, anchors: data && data.friction_anchors }),
         h("section", { className: "ae-panel ae-wide" },
           h("div", { className: "ae-panel-title-row" },
             h("h2", null, "Requests needing attention"),
-            h("span", { className: "ae-muted" }, "Sorted by request_friction_score")
+            h("span", { className: "ae-muted" }, "Sorted by friction_score")
           ),
           h(RequestsNeedingAttention, { requests: data && data.requests, onOpenSession })
         ),
         h("section", { className: "ae-panel" }, h("h2", null, "Health statuses"), h(StatusBars, { statuses: data && data.statuses })),
-        h("section", { className: "ae-panel" }, h("h2", null, "Incident labels"), h(IncidentLabelChips, { rows: data && data.incident_examples })),
+        h("section", { className: "ae-panel" }, h("h2", null, "Tool outcome reviews"), h(ToolOutcomeReviewChips, { rows: data && data.tool_outcome_cases })),
         h("section", { className: "ae-panel" },
           h("div", { className: "ae-panel-title-row" },
-            h("h2", null, "Recurring eval tasks"),
+            h("h2", null, "Recurring review jobs"),
             h("span", { className: "ae-muted" }, "Explicit controls")
           ),
           h(EvalTaskControls, { tasks, onAction: taskAction })
         ),
-        h("section", { className: "ae-panel" }, h("h2", null, "Top anomalies"), h(ChipList, { rows: data && data.top_anomalies, labelKey: "anomaly_type" })),
-        h("section", { className: "ae-panel ae-wide" }, h("h2", null, "Anomaly timeline"), h(Timeline, { timeline: data && data.timeline }))
+        h("section", { className: "ae-panel" }, h("h2", null, "Top findings"), h(ChipList, { rows: data && data.top_findings, labelKey: "finding_type" })),
+        h("section", { className: "ae-panel ae-wide" }, h("h2", null, "Finding timeline"), h(Timeline, { timeline: data && data.timeline }))
       ),
       h("section", { className: "ae-panel ae-wide" },
         h("div", { className: "ae-panel-title-row" },

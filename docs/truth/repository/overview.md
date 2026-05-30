@@ -40,7 +40,7 @@ This doc was created from the editable behavior-doc template at docs/templates/b
 
 ## Core Rules
 
-<!-- Capture stable business rules, invariants, precedence rules, validation rules, and must-never constraints. Omit incidental implementation details. -->
+<!-- Capture stable business rules, invariants, precedence rules, validation rules, and must-never constraints. Omit tool outcomeal implementation details. -->
 
 - Truth README files are indexes; behavior truth belongs in bounded leaf docs.
 
